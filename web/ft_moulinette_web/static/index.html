@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ft-moulinette</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">ft</span>
+      <div>
+        <h1>ft-moulinette</h1>
+        <p>Libft 1.3 · Printf 1.1 — contrôles locaux</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="side">
+      <form id="run-form" class="card" novalidate>
+        <h2>Nouvelle exécution</h2>
+        <label class="field" for="target">Cible
+          <input id="target" name="target" list="recent-targets" autocomplete="off" spellcheck="false"
+                 placeholder="/home/login/libft" required>
+        </label>
+        <datalist id="recent-targets"></datalist>
+        <p class="hint">Dossier du projet, ou un fichier <code>.c</code>/<code>.h</code>. Chemin absolu ou commençant par <code>~</code>.</p>
+
+        <label class="field" for="project">Projet
+          <select id="project" name="project">
+            <option value="auto">Détection automatique</option>
+            <option value="libft">Libft 1.3</option>
+            <option value="printf">Printf 1.1</option>
+          </select>
+        </label>
+
+        <fieldset class="toggles">
+          <legend>Contrôles</legend>
+          <label><input type="checkbox" id="norm" checked> Norminette</label>
+          <label><input type="checkbox" id="memory" checked> Valgrind</label>
+          <label><input type="checkbox" id="build" checked> Makefile et archive</label>
+        </fieldset>
+
+        <details class="advanced">
+          <summary>Réglages avancés</summary>
+          <div class="numbers">
+            <label class="field" for="iterations">Itérations
+              <input id="iterations" type="number" min="1" max="1000000" step="1" value="500" required>
+            </label>
+            <label class="field" for="seed">Graine
+              <input id="seed" type="number" step="1" value="42" required>
+            </label>
+            <label class="field" for="timeout">Délai (s)
+              <input id="timeout" type="number" min="1" max="3600" step="1" value="15" required>
+            </label>
+          </div>
+          <p class="hint">Le délai s’applique à chaque commande. Garde la graine et les itérations pour reproduire un échec.</p>
+        </details>
+
+        <button type="submit" id="submit" class="primary">Lancer la moulinette</button>
+        <p id="form-error" class="form-error" role="alert" hidden></p>
+      </form>
+
+      <section class="card history">
+        <h2>Historique</h2>
+        <ul id="runs" class="runs"></ul>
+        <p id="runs-empty" class="empty">Aucune exécution pour l’instant.</p>
+      </section>
+    </aside>
+
+    <section id="result" class="result" aria-live="polite">
+      <div class="placeholder">
+        <p class="placeholder-title">Aucun rapport sélectionné</p>
+        <p>Indique le chemin de ta libft ou de ton ft_printf, puis lance la moulinette. Le code et le Makefile du projet s’exécutent avec tes droits : n’utilise que des projets de confiance.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    Un rapport sans problème signalé ne certifie pas la conformité au sujet : README, choix d’implémentation et exigences subjectives demandent une relecture humaine.
+  </footer>
+</body>
+</html>

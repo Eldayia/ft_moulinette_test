@@ -1,6 +1,6 @@
 # Guide des agents de code — ft-moulinette
 
-Ce document décrit le fonctionnement, les conventions et l’état du dépôt pour permettre à un autre agent de reprendre le travail. Il doit être lu avec [cli/README.md](cli/README.md), qui reste le guide d’installation et d’utilisation de l’outil en ligne de commande.
+Ce document décrit le fonctionnement, les conventions et l’état du dépôt pour permettre à un autre agent de reprendre le travail. Il doit être lu avec [cli/README.md](cli/README.md) et [web/README.md](web/README.md), qui restent les guides d’installation et d’utilisation de la CLI et de l’interface web.
 
 **État relevé le 25 novembre 2026.** Les constats ci-dessous proviennent du code et des vérifications locales ; les pistes de travail ne sont pas des fonctionnalités déjà livrées.
 
@@ -34,7 +34,7 @@ Les projets C et leurs Makefiles exécutent du code avec les droits de l’utili
 Le dépôt est organisé en deux parties :
 
 - `cli/` : l’outil existant (moteur Python, lanceur, tests, scripts d’installation et d’archive, intégrations éditeur). Toutes ses commandes se lancent **depuis `cli/`** ; ses scripts résolvent leurs chemins par rapport à leur propre emplacement et l’archive de `package.sh` reproduit le contenu de `cli/` à sa racine.
-- `web/` : la partie web, en cours de mise en place (voir section 6).
+- `web/` : l’interface web locale, paquet Python `ft_moulinette_web` 0.1.0 (voir section 6). Ses commandes se lancent depuis `web/`.
 
 À la racine : `README.md` (présentation et renvois), ce guide, `CLAUDE.md` et `.gitignore` commun.
 
@@ -139,13 +139,25 @@ Les versions des composants ne sont actuellement pas alignées : paquet Python 0
 
 ## 6. Partie web
 
-Le dossier `web/` est réservé à l’interface web. Aucune pile technique n’est encore choisie ; ne pas en présumer une sans demande explicite. Ses contraintes de départ figurent dans [web/README.md](web/README.md) :
+`web/` contient un serveur HTTP en bibliothèque standard (`http.server`) et une page HTML/CSS/JS sans framework ni build. Guide utilisateur et API : [web/README.md](web/README.md).
 
-- Consommer le moteur de `cli/` (JSON `--json` ou `ft_moulinette.engine.run()`) plutôt que dupliquer les contrôles ; ne pas modifier le schéma JSON sans examiner les intégrations éditeur.
-- Le moteur exécute du code C et des Makefiles non confinés : un service exposé à du code non fiable exige un confinement séparé.
-- Une exécution complète est longue et lance de nombreux processus : prévoir un traitement asynchrone.
+| Chemin (relatif à `web/`) | Responsabilité |
+| --- | --- |
+| `bin/ft-moulinette-web` | Lanceur, indépendant du dossier courant |
+| `ft_moulinette_web/__main__.py` | Options, refus d’une écoute hors boucle locale sans `--allow-remote`, choix du moteur |
+| `ft_moulinette_web/server.py` | Routes `/`, `/static/*`, `/api/runs[/<id>]`, contrôles `Host`/`Origin`/`Sec-Fetch-Site`, CSP |
+| `ft_moulinette_web/jobs.py` | Validation des demandes, file à un seul exécutant, sous-processus CLI `--json`, annulation, annotation |
+| `ft_moulinette_web/static/` | `index.html`, `app.js`, `style.css` |
+| `tests/` | Tests unittest du serveur, avec le vrai moteur et des moteurs factices |
 
-Les livrables de `cli/` (`install.sh`, `package.sh`) n’incluent pas `web/`.
+Invariants :
+
+- Le serveur **ne réimplémente aucun contrôle** : il exécute la CLI (`--engine`, sinon `../cli/bin/ft-moulinette`, sinon `ft-moulinette` du PATH) avec `--json`. Les codes 0 et 1 accompagnés d’un rapport valide donnent l’état `done` ; tout autre cas donne `error`, avec le message argparse ou la fin de stderr.
+- Le rapport conserve le schéma de la CLI. Seuls `label` (via `ft_moulinette.report.check_label`, si `cli/` est importable) et `relative` sont ajoutés à chaque résultat. Les changements de schéma CLI doivent donc aussi être examinés côté `app.js`.
+- La validation serveur reprend les contraintes de la CLI : chemin absolu existant, dossier ou `.c`/`.h`, projet connu, entiers strictement positifs pour itérations et délai.
+- Protections à préserver : écoute locale par défaut, liste fermée de `Host`, refus des mutations d’une autre origine, JSON obligatoire et borné, liste fermée de fichiers statiques, construction du DOM par `textContent` (jamais `innerHTML` avec des données du rapport).
+- Annulation : SIGINT au groupe de processus du moteur (nettoyage des dossiers temporaires), puis SIGKILL après 5 secondes.
+- `install.sh` et `package.sh` n’incluent pas `web/`.
 
 ## 7. Validation
 
@@ -155,6 +167,13 @@ Depuis le dossier `cli/` :
 python3 -m unittest discover -s tests -v
 node --check integrations/vscode/extension.js
 sh -n install.sh package.sh
+```
+
+Depuis le dossier `web/` :
+
+```sh
+python3 -m unittest discover -s tests -v
+node --check ft_moulinette_web/static/app.js
 ```
 
 Pour isoler un domaine, la découverte conserve le dossier des tests dans les imports :
@@ -175,6 +194,7 @@ python3 -m unittest discover -s tests -p 'test_install.py' -v
 | `test_diagnostics.py`, `test_failure_messages.py`, `test_report.py` | Emplacements, messages utiles, présentation et distinction des problèmes |
 | `test_install.py` | Installation/mise à jour, alias, chemins complexes et autonomie après suppression des sources |
 | `test_reviewed.py` | Compatibilité de l’option masquée, sans effacement des erreurs ni persistance |
+| `web/tests/test_server.py`, `web/tests/test_main.py` | Protections HTTP, validation, exécution réelle Libft (succès/échec), annulation, erreurs du moteur, choix du moteur, refus d’écoute réseau |
 
 Les tests d’installation utilisent des dossiers personnels temporaires. Ne pas lancer `install.sh` sur la configuration réelle de l’utilisateur pour valider une modification de documentation.
 
@@ -189,6 +209,14 @@ Commandes lancées depuis `cli/` :
 - `sh package.sh` sur une copie temporaire : l’archive contient `bin`, `ft_moulinette`, `install.sh`, `integrations`, `package.sh`, `pyproject.toml`, `README.md` à sa racine.
 - Chargement et interactions graphiques Neovim/VSCode/CLion : non vérifiés. Plugins et archive de distribution du dépôt non reconstruits.
 
+Interface web, depuis `web/` :
+
+- `python3 -m unittest discover -s tests -v` : **16 tests exécutés, 16 réussis**, en environ 7 secondes.
+- `node --check ft_moulinette_web/static/app.js` : réussi.
+- Firefox headless piloté par WebDriver BiDi, sur une libft de 42 fonctions avec erreurs volontaires (`ft_strlen` faux, `ft_toupper` absent) : rapport affiché, filtres, recherche, détails, lancement depuis le formulaire, état en cours, annulation et refus d’un chemin introuvable vérifiés. Exécution complète en 55 secondes. Aucun dossier temporaire ni processus du moteur restant après l’annulation.
+- `pip install -e ../cli -e .` dans un environnement virtuel temporaire : commande `ft-moulinette-web` et fichiers statiques disponibles.
+- Non vérifiés : thème sombre, petits écrans, navigateurs autres que Firefox.
+
 Un bilan précédent, dans un environnement où Valgrind ne démarrait pas (redirection `memcmp` introuvable dans `ld-linux-x86-64.so.2`), donnait 1 échec (`test_printf.PrintfTests.test_memory_reference_and_leak`) et 2 tests ignorés. Le test mémoire Printf ne vérifie toujours que la présence de l’exécutable Valgrind, et non son démarrage, avant de s’exécuter. Lors d’une nouvelle intervention, relancer les vérifications nécessaires et remplacer ce bilan si de nouvelles preuves sont disponibles.
 
 ## 8. Avancement et prochaines étapes possibles
@@ -202,7 +230,7 @@ Un bilan précédent, dans un environnement où Valgrind ne démarrait pas (redi
 | Installation locale | Script et test d’installation présents ; test passé | Bash/Zsh pour les alias ; intégrations conservées séparément |
 | Éditeurs | Intégrations et scripts de build présents | Validation graphique à effectuer dans chaque éditeur |
 | Documentation | README et présent guide rédigés | Actualiser au fil des changements réels |
-| Web | Dossier `web/` et contraintes initiales en place | Choisir la pile, définir le périmètre et l’isolation de l’exécution |
+| Web | Interface locale, API JSON, file, annulation et tests en place | Pas de progression intermédiaire, d’envoi de fichiers ni de confinement pour un usage réseau |
 
 Pistes de travail, à entreprendre seulement si elles correspondent à une demande :
 
@@ -211,5 +239,7 @@ Pistes de travail, à entreprendre seulement si elles correspondent à une deman
 3. Effectuer une réception graphique des trois intégrations : projet incomplet, fichier seul, erreur de compilation, correction et relance.
 4. Clarifier et harmoniser les versions et la génération des livrables avant une nouvelle distribution.
 5. Étendre les bancs à partir de régressions démontrées ou de nouvelles versions de sujet, avec des attentes explicites et des tests de référence.
+
+6. Web : exposer une progression (par exemple une sortie d’événements de la CLI), puis un mode multi-utilisateur seulement avec un confinement réel de l’exécution.
 
 Ne pas déclarer ces étapes terminées sans preuve. Ne pas élargir implicitement le périmètre à d’autres projets 42 ou à une plateforme supplémentaire.

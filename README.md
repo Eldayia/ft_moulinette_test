@@ -5,9 +5,10 @@ Moulinette locale pour les projets **Libft 1.3** et **Printf 1.1** de 42.
 | Dossier | Contenu |
 | --- | --- |
 | [`cli/`](cli/) | Moteur Python, lanceur, tests, scripts d’installation et d’archive, intégrations Neovim/VSCode/CLion |
-| [`web/`](web/) | Partie web, en cours de mise en place |
+| [`web/`](web/) | Interface web locale : lancement des contrôles et rapport interactif dans le navigateur |
 
 - Installation et utilisation de l’outil en ligne de commande : [cli/README.md](cli/README.md).
+- Interface web : [web/README.md](web/README.md).
 - Fonctionnement interne, conventions et état du dépôt : [AGENT.md](AGENT.md).
 
 Démarrage rapide :
@@ -16,4 +17,7 @@ Démarrage rapide :
 cd cli
 sh install.sh
 moulinette /chemin/vers/libft
+
+# ou, dans le navigateur : http://127.0.0.1:8042/
+../web/bin/ft-moulinette-web
 ```
