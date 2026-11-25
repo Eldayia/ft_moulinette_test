@@ -2,7 +2,7 @@
 
 Ce document suit la mission décrite dans [AGENT.md](../AGENT.md). Il distingue ce qui est **vérifié dans la documentation officielle**, ce qui est **implémenté et testé localement**, et ce qui **reste à valider sur Google Cloud**. Aucun test local ou mock ne vaut validation de l’isolation Cloud Run.
 
-**Statut au 25 novembre 2026 :** phase 1 terminée (abstraction, protocole, validation des fichiers, `LocalRunner`, `MockRunner`, client `CloudRunRunner`, tests locaux) ; phase 2 à faire. Aucune ressource Google Cloud n’a été créée. Aucun accès Google Cloud (ni `gcloud`, ni credentials) n’est disponible dans l’environnement de développement.
+**Statut au 25 novembre 2026 :** phases 1 et 2 terminées et testées localement (abstraction, protocole, client `CloudRunRunner`, service runner-api avec un double de la CLI `sandbox`) ; phase 3 (images) à faire. Aucune ressource Google Cloud n’a été créée. Aucun accès Google Cloud (ni `gcloud`, ni credentials) n’est disponible dans l’environnement de développement.
 
 ## 1. Audit du dépôt
 
@@ -113,7 +113,7 @@ Le résultat global (`outcome`) est dérivé des contrôles par du code de confi
 | Phase | Contenu | État |
 | --- | --- | --- |
 | 1 | Audit, abstraction, protocole, validation des fichiers, `LocalRunner`, `MockRunner`, `CloudRunRunner` (client), tests de non-régression | Fait (65 tests `runners/`, voir §5.1) |
-| 2 | Service runner-api (FastAPI), orchestration `sandbox`, rapports, vérification IAM côté client | À faire |
+| 2 | Service runner-api (FastAPI), orchestration `sandbox`, rapports, vérification IAM côté client | Fait localement (`workers/cloudrun/`, 14 tests avec double de la CLI sandbox, voir §5.2) |
 | 3 | Images Docker, rootfs sandbox, limites, tests de sécurité locaux | À faire |
 | 4 | Fonction de tâche RQ, Compose OVH, configuration, quotas | À faire |
 | 5 | Scripts GCP, CI GitHub Actions, documentation coûts et sécurité | À faire |
@@ -127,6 +127,13 @@ Le résultat global (`outcome`) est dérivé des contrôles par du code de confi
 - Défauts trouvés et corrigés par les tests : écrasement silencieux de deux noms identiques après normalisation NFC, rapport légitime refusé (champ `message` des diagnostics), liste des fonctions lue avant que le moteur soit importable.
 - Les délais du moteur restent par commande : le délai par test individuel (3 s dans la mission) n’est pas distinct de celui de compilation. `command_timeout` couvre les deux.
 
+### 5.2 Phase 2 : livré
+
+- `workers/cloudrun/runner_api/` : `app.py` (FastAPI, endpoints internes, pas de documentation publique, une exécution à la fois, déduplication par instance, interrupteur, échec fermé), `sandbox.py` (commande `sandbox do` limitée aux options documentées, suppression systématique, délai global), `settings.py` (remplacement de la CLI sandbox interdit en production), `logs.py` (JSON structuré, champs autorisés seulement).
+- Dépendances figées : `requirements.txt` (exécution), `requirements-dev.txt` (tests).
+- L’authentification est assurée par IAM devant le conteneur : le service ne vérifie pas lui-même le jeton et ne doit jamais être déployé avec accès anonyme (contrôlé par `deploy.sh`, phase 5).
+- Durées de compilation et de tests : non mesurées séparément par le moteur ; seules la durée totale et la durée de la sandbox sont rapportées (`compile_seconds` et `tests_seconds` valent `null`).
+
 ## 6. Vérifications restant à faire sur Google Cloud
 
 Liste tenue à jour à mesure de l’avancement ; elle demande un projet GCP et ton autorisation explicite avant toute ressource facturable.
@@ -134,7 +141,8 @@ Liste tenue à jour à mesure de l’avancement ; elle demande un projet GCP et 
 - Disponibilité des sandboxes en `europe-west1`.
 - `sandbox do --rootfs /opt/sandbox-rootfs` fonctionne avec un dossier autre que `/` ; `gcc`, `make`, `valgrind`, `norminette` y fonctionnent ; fork, exec, threads, signaux, pipes.
 - Réseau sortant bloqué, serveur de métadonnées inaccessible, aucune variable d’environnement de l’hôte visible.
-- Montage `readonly` réellement en lecture seule malgré `sudo`.
+- Montage `readonly` réellement en lecture seule malgré `sudo`, et lisible par l’utilisateur non root de la sandbox (dossier `0755`, fichiers `0644`).
+- Code de sortie et suppression réels : `sandbox do` supprime-t-il la sandbox quand la commande échoue ? `delete --force` renvoie-t-il 1 ensuite ?
 - Comportement de `sandbox delete --force` après dépassement du délai, et absence de sandbox orpheline.
 - Comportement à la limite mémoire de l’instance (OOM) et classement correct en `resource_limit`.
 - Accès anonyme refusé (HTTP 403 sans jeton) et seul `ft-moulinette-invoker` autorisé.

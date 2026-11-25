@@ -42,6 +42,10 @@ Always run tests via `discover -s tests` from `cli/`: test modules import `refer
 
 `python3 -m unittest discover -s tests -v` — 65 tests, stdlib only (google-auth is mocked). `ft_moulinette_runners` holds the `ExecutionBackend` contract, protocol v1, archive validation and the Local/Mock/CloudRun backends; see `runners/README.md`. Invariants: never fall back from cloudrun to local; production accepts only isolated backends; reports are untrusted (validated, outcome recomputed by `protocol.classify`); never retry a request whose state is unknown; never log ID tokens.
 
+### runner-api (run from `workers/cloudrun/`)
+
+`.venv/bin/python -m unittest discover -s tests -v` after `python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`. FastAPI service deployed on Cloud Run; it only orchestrates `sandbox do` with documented flags (never `--allow-egress`/`--write`/writable mounts) and must fail closed. `tests/fake_sandbox.py` is a non-isolating test double, refused in production.
+
 ### CLI architecture in one pass
 
 - `__main__.main()` → `engine.run()` → `engine.detect_project()` picks Printf (via `ft_printf.h` / `libftprintf.a` markers) or defaults to Libft; Printf is delegated to `printf.run_printf()`.

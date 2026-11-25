@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .base import ExecutionBackend, ExecutionResult, Health, infrastructure_error
+from .base import ExecutionBackend, ExecutionError, ExecutionResult, Health, infrastructure_error
 from .limits import Limits
 from .protocol import build_metadata, parse_response
 from .workspace import pack_directory, read_archive
@@ -244,7 +244,13 @@ class CloudRunRunner(ExecutionBackend):
             if status == 429 and attempt < self.max_attempts:  # aucune instance disponible : non traité
                 self.sleep(self.backoff[min(attempt - 1, len(self.backoff) - 1)])
                 continue
-            code = (data or {}).get('error', {}).get('code') if isinstance((data or {}).get('error'), dict) else None
+            body_error = data.get('error') if isinstance(data, dict) and isinstance(data.get('error'), dict) else {}
+            code = body_error.get('code')
+            if status in (400, 413, 422) and body_error.get('category') == 'user':
+                # Soumission refusée par la revalidation du runner : erreur utilisateur, motif transmis.
+                message = body_error.get('message') if isinstance(body_error.get('message'), str) else 'Soumission refusée.'
+                return ExecutionResult(sid, 'unsupported', None, dict(backend=self.name, interruption='rejected'),
+                                       ExecutionError('user', str(code)[:64], message[:4096]))
             if status == 503 and code == 'sandbox_unavailable':
                 return failure('sandbox_unavailable', 'sandbox_unavailable', 'Sandbox indisponible sur le runner.')
             messages = {401: ('auth_failed', 'ID token refusé par Cloud Run (HTTP 401).'),

@@ -176,6 +176,14 @@ class ExecuteTests(CloudRunCase):
             self.assertEqual(result.error.category, 'infrastructure')
             self.assertEqual(len(api.requests), 1, f'{status} ne doit pas être relancé')
 
+    def test_rejection_by_runner_is_a_user_error(self):
+        body = {'protocol': 1, 'error': {'category': 'user', 'code': 'invalid_path', 'message': 'Chemin refusé'}}
+        api = self.api((422, body, 0))
+        result = self.runner(api).execute(self.submission)
+        self.assertEqual((result.outcome, result.error.category, result.error.code), ('unsupported', 'user', 'invalid_path'))
+        api = self.api((400, {'error': {'category': 'infrastructure', 'code': 'x'}}, 0))
+        self.assertEqual(self.runner(api).execute(self.submission).error.category, 'infrastructure')
+
     def test_429_is_retried_with_backoff_then_gives_up(self):
         api = self.api((429, {}, 0), (429, {}, 0), (200, self.ok(), 0))
         self.assertEqual(self.runner(api).execute(self.submission).outcome, 'test_failure')
