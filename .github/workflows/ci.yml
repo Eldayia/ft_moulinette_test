@@ -1,0 +1,63 @@
+# Intégration continue : tests locaux et mocks, schémas, validation des fichiers, images, analyses.
+# Aucun accès Google Cloud ici : rien ne valide l'isolation Cloud Run (voir docs/cloudrun.md §6).
+# Les actions tierces sont épinglées par version majeure ; à épingler par SHA avant l'ouverture publique.
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Outils C du moteur
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind
+      - name: Moteur (cli)
+        working-directory: cli
+        run: python -m unittest discover -s tests -v
+      - name: Interface web locale
+        working-directory: web
+        run: python -m unittest discover -s tests -v
+      - name: Moteurs d'exécution, protocole, archives, CloudRunRunner (mocks)
+        working-directory: runners
+        run: python -m unittest discover -s tests -v
+      - name: Service runner-api (double de la CLI sandbox)
+        working-directory: workers/cloudrun
+        run: |
+          python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+          .venv/bin/python -m unittest discover -s tests -v
+      - name: Worker VPS (Redis réel dans Docker)
+        working-directory: workers/dispatcher
+        run: |
+          python -m venv .venv && .venv/bin/pip install -r requirements.txt
+          .venv/bin/python -m unittest discover -s tests -v
+      - name: Rendu du manifeste Cloud Run
+        working-directory: deploy/gcp
+        run: python -m unittest discover -s tests -v
+      - name: Scripts shell
+        run: shellcheck -x -P SCRIPTDIR deploy/gcp/*.sh cli/install.sh cli/package.sh
+      - name: Audit des dépendances Python figées
+        run: |
+          python -m pip install pip-audit==2.10.1
+          pip-audit -r workers/cloudrun/requirements.txt
+          pip-audit -r workers/dispatcher/requirements.txt
+
+  images:
+    runs-on: ubuntu-24.04
+    needs: python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construction et vérifications locales (sans publication)
+        run: deploy/gcp/build.sh --tag ci-${{ github.sha }}
+      - name: Analyse des images (Trivy, vulnérabilités hautes et critiques)
+        run: |
+          for image in sandbox-c runner-api; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.68.1 \
+              image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0 "ft-moulinette/$image:ci-${{ github.sha }}"
+          done

@@ -1,0 +1,39 @@
+# Déploiement manuel sur Google Cloud (jamais automatique après un commit).
+# Authentification par GitHub OIDC et Workload Identity Federation : aucune clé JSON dans le dépôt
+# ni dans les secrets GitHub. Variables du dépôt requises : GCP_PROJECT_ID, GCP_WIF_PROVIDER,
+# GCP_DEPLOY_SERVICE_ACCOUNT (compte de déploiement distinct de runtime et d'invoker).
+name: deploy-gcp
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Taper « deployer » pour confirmer le déploiement et la validation réelle'
+        required: true
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    if: github.event.inputs.confirm == 'deployer'
+    runs-on: ubuntu-24.04
+    environment: gcp-validation
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: beta
+      - name: Authentification Docker auprès d'Artifact Registry
+        run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+      - name: Construction, tests et publication par digest
+        run: deploy/gcp/build.sh --push --yes
+      - name: Déploiement et vérifications IAM
+        run: deploy/gcp/deploy.sh --yes
+      - name: Validation réelle
+        run: deploy/gcp/smoke-test.sh

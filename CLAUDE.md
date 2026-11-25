@@ -46,6 +46,13 @@ Always run tests via `discover -s tests` from `cli/`: test modules import `refer
 
 `.venv/bin/python -m unittest discover -s tests -v` after `python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`. FastAPI service deployed on Cloud Run; it only orchestrates `sandbox do` with documented flags (never `--allow-egress`/`--write`/writable mounts) and must fail closed. `tests/fake_sandbox.py` is a non-isolating test double, refused in production.
 
+### Dispatcher, images, deploy
+
+- `workers/dispatcher/` (VPS worker: Redis quotas via Lua, RQ 3 enqueue with `unique=True`, task): `.venv/bin/python -m unittest discover -s tests -v` (starts a pinned Redis container).
+- Images: `deploy/gcp/build.sh` (no `--push` = local only; uses the classic builder when buildx is missing). Never add C tools to the runner or worker images.
+- `deploy/gcp/*.sh` are never run against Google without the user's explicit go-ahead (billable resources); `render.py` tests: `python3 -m unittest discover -s deploy/gcp/tests`. `shellcheck -x -P SCRIPTDIR deploy/gcp/*.sh` must stay clean.
+- Adversarial tests (`FTM_ADVERSARIAL_TESTS=docker`, smoke probes) need explicit authorization; never on the production VPS.
+
 ### CLI architecture in one pass
 
 - `__main__.main()` → `engine.run()` → `engine.detect_project()` picks Printf (via `ft_printf.h` / `libftprintf.a` markers) or defaults to Libft; Printf is delegated to `printf.run_printf()`.

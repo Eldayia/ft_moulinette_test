@@ -2,7 +2,7 @@
 
 Ce document suit la mission décrite dans [AGENT.md](../AGENT.md). Il distingue ce qui est **vérifié dans la documentation officielle**, ce qui est **implémenté et testé localement**, et ce qui **reste à valider sur Google Cloud**. Aucun test local ou mock ne vaut validation de l’isolation Cloud Run.
 
-**Statut au 25 novembre 2026 :** phases 1 à 3 terminées et vérifiées localement (abstraction, protocole, client, service runner-api, images Docker construites, `DockerRunner`) ; phases 4 et 5 en cours. Aucune ressource Google Cloud n’a été créée. Aucun accès Google Cloud (ni `gcloud`, ni credentials) n’est disponible dans l’environnement de développement.
+**Statut au 25 novembre 2026 :** phases 1 à 5 terminées et vérifiées localement ; phase 6 bloquée par l’absence de l’API publique OVH ; phase 7 (validation réelle) en attente de ton projet GCP. **L’isolation Cloud Run n’est pas validée.** Aucune ressource Google Cloud n’a été créée. Aucun accès Google Cloud (ni `gcloud`, ni credentials) n’est disponible dans l’environnement de développement.
 
 ## 1. Audit du dépôt
 
@@ -115,9 +115,9 @@ Le résultat global (`outcome`) est dérivé des contrôles par du code de confi
 | 1 | Audit, abstraction, protocole, validation des fichiers, `LocalRunner`, `MockRunner`, `CloudRunRunner` (client), tests de non-régression | Fait (65 tests `runners/`, voir §5.1) |
 | 2 | Service runner-api (FastAPI), orchestration `sandbox`, rapports, vérification IAM côté client | Fait localement (`workers/cloudrun/`, 14 tests avec double de la CLI sandbox, voir §5.2) |
 | 3 | Images Docker, rootfs sandbox, limites, tests de sécurité locaux | Fait localement (voir §5.3) ; tests adversariaux écrits, non exécutés (autorisation requise) |
-| 4 | Fonction de tâche RQ, Compose OVH, configuration, quotas | À faire |
-| 5 | Scripts GCP, CI GitHub Actions, documentation coûts et sécurité | À faire |
-| 6 | Mode distant des intégrations (via l’API OVH), observabilité, interface | À faire (dépend de l’API publique OVH, absente) |
+| 4 | Fonction de tâche RQ, Compose OVH, configuration, quotas | Fait (`workers/dispatcher/`, 15 tests avec Redis et RQ réels, image worker, fragment Compose validé) |
+| 5 | Scripts GCP, CI GitHub Actions, documentation coûts et sécurité | Fait (`deploy/gcp/`, `.github/workflows/`, `docs/`) ; scripts GCP jamais exécutés contre Google |
+| 6 | Mode distant des intégrations (via l’API OVH), observabilité, interface | Bloqué : l’API publique OVH, l’authentification des utilisateurs et PostgreSQL n’existent pas dans le dépôt. Les intégrations doivent appeler cette API, jamais Cloud Run. Les journaux structurés et le format des résultats sont prêts. |
 | 7 | Validation réelle sur Google Cloud | Nécessite ton accès GCP et ton autorisation |
 
 ### 5.1 Phase 1 : livré
@@ -143,9 +143,25 @@ Le résultat global (`outcome`) est dérivé des contrôles par du code de confi
 - `DockerRunner` (développement uniquement, `isolated = False`) : `--network none`, racine en lecture seule, `/tmp` en mémoire `nosuid,nodev`, utilisateur 10001, `--cap-drop ALL`, `no-new-privileges`, processus, mémoire et CPU bornés, soumission montée en lecture seule, `docker rm --force` systématique. Vérifié par des sondes : réseau et serveur de métadonnées bloqués, soumission et moteur en lecture seule, aucune variable Google visible, conteneur supprimé après délai.
 - Tests adversariaux (fork bomb, mémoire, disque, flot de journaux) écrits dans `runners/tests/test_docker.py`, **non exécutés** : ils demandent `FTM_ADVERSARIAL_TESTS=docker` dans un environnement explicitement autorisé (§21 de la mission).
 
+### 5.4 Phases 4 et 5 : livré
+
+- `workers/dispatcher/` : quotas atomiques (Lua Redis), mise en file RQ unique par `submission_id`, tâche sans nouvelle tentative automatique ; testé contre Redis 7.4 et RQ 3.0.0 réels.
+- `docker/ovh/Dockerfile.worker`, `deploy/ovh/docker-compose.worker.yml` (validé par `docker compose config`), `deploy/ovh/worker.env.example`.
+- `deploy/gcp/` : `bootstrap.sh`, `build.sh` (exécuté localement sans `--push` : construction, tests, échec fermé), `deploy.sh`, `smoke-test.sh` et `smoke_test.py`, `render.py` (testé), `service.yaml.template`, `cleanup-policy.json` ; `shellcheck` propre.
+- `.github/workflows/ci.yml` (tous les tests, `shellcheck`, `pip-audit`, construction des images, Trivy) et `deploy-gcp.yml` (manuel, OIDC et WIF, sans clé). Non exécutés : aucun dépôt GitHub distant n’est configuré.
+- Documentation : [architecture.md](architecture.md), [cloudrun-security.md](cloudrun-security.md), [cloudrun-costs.md](cloudrun-costs.md) (sans tarif : page officielle illisible automatiquement), [docker-deployment.md](docker-deployment.md), [deploy/gcp/README.md](../deploy/gcp/README.md).
+
 ## 6. Vérifications restant à faire sur Google Cloud
 
-Liste tenue à jour à mesure de l’avancement ; elle demande un projet GCP et ton autorisation explicite avant toute ressource facturable.
+Ces étapes demandent un projet GCP dédié, ton compte `gcloud`, et ton autorisation explicite avant toute ressource facturable. Dans l’ordre :
+
+1. `cp deploy/gcp/config.env.example deploy/gcp/config.env` (renseigner `PROJECT_ID`), puis `deploy/gcp/bootstrap.sh`.
+2. `deploy/gcp/build.sh --push` (après commit), puis `deploy/gcp/deploy.sh`. Vérifier que `gcloud beta run services replace` accepte le manifeste : les champs généraux (autoscaling, gen2, `cpu-throttling`, volume `emptyDir` en mémoire) n’ont pas été relus dans la documentation pendant cette session.
+3. `deploy/gcp/smoke-test.sh`, puis reporter ici son résumé complet (vérifications et observations `PROBE_UID`, `PROBE_SUDO`, `PROBE_PATH`).
+4. Mesurer le démarrage à froid avec une image d’environ 1,2 Go, la durée réelle d’une soumission Libft complète, puis compléter `docs/cloudrun-costs.md` avec les tarifs officiels.
+5. Tests adversariaux bornés sur le service de validation (fork bomb, mémoire, disque, flot de sortie), avec ton accord explicite, et observation du comportement de l’instance (OOM, redémarrage, classement du résultat).
+
+Points précis à observer :
 
 - Disponibilité des sandboxes en `europe-west1`.
 - `sandbox do --rootfs /opt/sandbox-rootfs` fonctionne avec un dossier autre que `/` (rootfs copié depuis sandbox-c) ; `gcc`, `make`, `valgrind`, `norminette` y fonctionnent ; fork, exec, threads, signaux, pipes.

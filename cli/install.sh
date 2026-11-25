@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installation hors ligne depuis le dossier extrait ou cloné.
 set -eu
-SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SOURCE_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 if ! command -v python3 >/dev/null 2>&1; then
     printf '%s\n' 'Erreur : Python 3.10 ou supérieur est nécessaire.' >&2
     exit 1

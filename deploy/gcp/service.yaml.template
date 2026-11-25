@@ -1,0 +1,60 @@
+# Service Cloud Run runner-api. Rendu par deploy.sh (render.py remplace chaque variable entre accolades), puis :
+#   gcloud beta run services replace service.yaml --region REGION
+#
+# Provenance des champs :
+# - documentation Cloud Run sandboxes (lue le 25/11/2026) : annotation launch-stage BETA, sandboxLauncher: true
+#   dans l'entrée du conteneur, environnement de deuxième génération imposé ;
+# - champs Cloud Run généraux (autoscaling, gen2, cpu-throttling, concurrence, délai, volume en mémoire) :
+#   syntaxe Knative/Cloud Run standard, à confirmer contre la documentation au premier déploiement.
+# Aucun secret ici. Pas de --allow-unauthenticated : l'accès est donné par IAM au seul compte invoker.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ${SERVICE_NAME}
+  annotations:
+    run.googleapis.com/launch-stage: BETA
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "${MIN_INSTANCES}"
+        autoscaling.knative.dev/maxScale: "${MAX_INSTANCES}"
+        run.googleapis.com/execution-environment: gen2
+        # Facturation à la requête : le CPU n'est alloué que pendant le traitement des requêtes.
+        run.googleapis.com/cpu-throttling: "true"
+    spec:
+      serviceAccountName: ${RUNTIME_SA}
+      containerConcurrency: 1
+      timeoutSeconds: ${REQUEST_TIMEOUT}
+      containers:
+        - name: runner-api
+          image: ${RUNNER_IMAGE}
+          sandboxLauncher: true
+          ports:
+            - name: http1
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: "${CPU}"
+              memory: ${MEMORY}
+          env:
+            - name: FTM_ENVIRONMENT
+              value: production
+            - name: FTM_IMAGE_VERSION
+              value: "${RUNNER_IMAGE}"
+            - name: FTM_LIMIT_SUBMISSION_TIMEOUT
+              value: "${SUBMISSION_TIMEOUT}"
+            - name: FTM_LIMIT_REQUEST_TIMEOUT
+              value: "${REQUEST_TIMEOUT}"
+            - name: FTM_EXECUTIONS_DISABLED
+              value: "${EXECUTIONS_DISABLED}"
+          volumeMounts:
+            - name: ftm-work
+              mountPath: /tmp/ftm
+      volumes:
+        # Espaces de soumission en mémoire, bornés ; un sous-dossier unique par soumission.
+        - name: ftm-work
+          emptyDir:
+            medium: Memory
+            sizeLimit: ${WORKSPACE_SIZE}
