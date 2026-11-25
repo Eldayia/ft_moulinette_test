@@ -43,7 +43,7 @@ def test_printf(links, work, project, execute, add, memory, iterations, seed, ti
 
 
 def run_printf(target, norm=True, memory=True, iterations=500, seed=42, timeout=15, build=True, progress=None):
-    from .engine import execute
+    from .engine import copy_project, execute
     target = Path(target).resolve()
     if not target.exists() or (target.is_file() and target.suffix not in ('.c', '.h')):
         raise ValueError('Indiquer un dossier ou un fichier C/header existant')
@@ -52,8 +52,7 @@ def run_printf(target, norm=True, memory=True, iterations=500, seed=42, timeout=
     with tempfile.TemporaryDirectory(prefix='ft-moulinette-printf-') as temp:
         work = Path(temp)
         project = work/'project'
-        shutil.copytree(root, project, ignore=shutil.ignore_patterns(
-            '.git', '.venv', '__pycache__', 'node_modules'), symlinks=True)
+        copy_project(root, project)
 
         def add(file, check, status, message):
             details = locations(message, check.removeprefix('archive:').split(':')[0], file, root, project)

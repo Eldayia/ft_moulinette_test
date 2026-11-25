@@ -37,6 +37,20 @@ def execute(args, cwd, timeout=15):
         return code, ('Délai dépassé\n' if code == 124 else '') + text
 
 
+def copy_project(root, destination):
+    """Copie de travail du projet ; la source peut être en lecture seule (montage, dépôt protégé).
+
+    copytree conserve les permissions : sans correction, make ne pourrait pas écrire ses objets
+    dans la copie. Seule la copie devient inscriptible par son propriétaire ; les liens
+    symboliques sont conservés tels quels et ne sont pas suivis.
+    """
+    shutil.copytree(root, destination, symlinks=True, ignore=shutil.ignore_patterns(
+        '.git', '.venv', '__pycache__', 'node_modules'))
+    for path in [destination, *destination.rglob('*')]:
+        if not path.is_symlink():
+            path.chmod(path.stat().st_mode | 0o200 | (0o100 if path.is_dir() else 0))
+
+
 def detect_project(target, subject='auto'):
     if subject not in ('auto', 'libft', 'printf'):
         raise ValueError('Projet attendu : auto, libft ou printf')
@@ -89,7 +103,7 @@ def run(target, norm=True, memory=True, iterations=500, seed=42, timeout=15, bui
                     'Valgrind ne peut pas démarrer. Les contrôles mémoire n’ont pas été exécutés.\n'+output)
                 memory = False
         project = work / 'project'
-        shutil.copytree(root, project, ignore=shutil.ignore_patterns('.git', '.venv', '__pycache__', 'node_modules'), symlinks=True)
+        copy_project(root, project)
         if target.is_dir():
             for name in ['Makefile','libft.h','README.md'] + ['ft_'+f+'.c' for f in FUNCTIONS]:
                 if not (root/name).is_file(): add(name,'presence','missing','Fichier attendu absent')
