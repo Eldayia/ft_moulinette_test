@@ -1,0 +1,10 @@
+# Contexte de construction des images Cloud Run : uniquement le nécessaire, jamais de secret.
+**
+!cli/bin/
+!cli/ft_moulinette/
+!runners/ft_moulinette_runners/
+!workers/cloudrun/runner_api/
+!workers/cloudrun/requirements.txt
+!docker/cloudrun/
+**/__pycache__
+**/*.pyc

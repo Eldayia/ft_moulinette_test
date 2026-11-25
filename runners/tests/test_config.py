@@ -40,9 +40,12 @@ class SelectionTests(unittest.TestCase):
                                     CLOUD_RUN_AUDIENCE='https://audience.example'))
         self.assertEqual((wif.tokens.mode, wif.tokens.audience), ('wif', 'https://audience.example'))
 
-    def test_docker_is_not_silently_replaced(self):
-        with self.assertRaises(ConfigurationError):
-            backend_from_env(dict(EXECUTION_BACKEND='docker'))
+    def test_docker_is_development_only(self):
+        from ft_moulinette_runners.docker import DockerRunner
+        backend = backend_from_env(dict(EXECUTION_BACKEND='docker', FTM_DOCKER_IMAGE='sandbox-c:test'))
+        self.assertIsInstance(backend, DockerRunner)
+        self.assertFalse(backend.isolated)
+        self.assertEqual(backend.image, 'sandbox-c:test')
 
 
 class SettingsTests(unittest.TestCase):

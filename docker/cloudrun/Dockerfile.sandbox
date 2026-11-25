@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1
+# Image sandbox-c : outils de compilation et d'analyse C, moteur ft-moulinette et ses tests approuvés.
+# Elle n'est jamais exécutée telle quelle sur Cloud Run : son système de fichiers est copié dans l'image
+# runner (/opt/sandbox-rootfs) et sert de racine aux sandboxes (sandbox do --rootfs). Aucun secret ici.
+#
+# Reproductibilité : image de base figée par digest, paquets Debian lus dans snapshot.debian.org à une
+# date fixe (HTTP : l'intégrité repose sur les signatures GPG de l'archive Debian, vérifiées par apt), Norminette et ses dépendances à versions figées. Rien n'est téléchargé pendant une soumission.
+ARG DEBIAN_IMAGE=debian:12-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e
+FROM ${DEBIAN_IMAGE}
+
+ARG DEBIAN_SNAPSHOT=20261124T000000Z
+ARG NORMINETTE_VERSION=3.3.60
+
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/debian.sources; \
+    printf '%s\n' \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} bookworm main" \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} bookworm-updates main" \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT} bookworm-security main" \
+      > /etc/apt/sources.list; \
+    apt-get -o Acquire::Retries=5 update --error-on=any; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      gcc clang make binutils libc6-dev valgrind python3 python3-venv ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
+
+# Norminette dans un environnement isolé, versions figées.
+RUN set -eux; \
+    python3 -m venv /opt/norminette; \
+    /opt/norminette/bin/pip install --no-cache-dir "norminette==${NORMINETTE_VERSION}"; \
+    ln -s /opt/norminette/bin/norminette /usr/local/bin/norminette; \
+    /opt/norminette/bin/pip freeze > /opt/norminette/FROZEN.txt; \
+    rm -rf /root/.cache
+
+# Moteur et définitions de tests approuvées (versionnés avec le dépôt), en lecture seule.
+COPY cli/bin/ /opt/ft-moulinette/bin/
+COPY cli/ft_moulinette/ /opt/ft-moulinette/ft_moulinette/
+RUN set -eux; \
+    find /opt/ft-moulinette -name '__pycache__' -prune -exec rm -rf {} +; \
+    chmod -R a-w,a+rX /opt/ft-moulinette; \
+    chmod 0555 /opt/ft-moulinette/bin/ft-moulinette; \
+    { echo "debian_snapshot=${DEBIAN_SNAPSHOT}"; echo "norminette=${NORMINETTE_VERSION}"; \
+      dpkg-query -W -f='${Package}=${Version}\n' gcc clang make binutils libc6-dev valgrind python3 libasan8 libubsan1; \
+    } > /opt/ft-moulinette/IMAGE_MANIFEST; \
+    cc --version >/dev/null; make --version >/dev/null; valgrind --version >/dev/null; norminette --version >/dev/null
+
+# Utilisateur non privilégié pour les vérifications locales (dans Cloud Run, l'utilisateur de la sandbox
+# est imposé par Google : non root, avec sudo, d'après la documentation).
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin student
+USER 10001
+WORKDIR /tmp
+ENTRYPOINT ["/usr/bin/python3", "/opt/ft-moulinette/bin/ft-moulinette"]

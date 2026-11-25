@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+# Image runner-api : composants de confiance uniquement (Python, FastAPI, orchestrateur de sandbox).
+# Elle ne compile ni n'exécute jamais le code soumis. Les outils C ne sont pas installés dans ce
+# conteneur : le système de fichiers de sandbox-c est copié sous /opt/sandbox-rootfs, hors du PATH,
+# et ne sert que de racine aux sandboxes (`sandbox do --rootfs /opt/sandbox-rootfs`).
+#
+# Construction (depuis la racine du dépôt, voir deploy/gcp/build.sh) :
+#   docker build -f docker/cloudrun/Dockerfile.runner --build-arg SANDBOX_IMAGE=<sandbox-c@sha256:…> .
+ARG SANDBOX_IMAGE=ft-moulinette/sandbox-c:dev
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:44cf1793efa7c7a476bb0f2cff81443f4a072c90c1cb127e2924933daa3e8c64
+
+FROM ${SANDBOX_IMAGE} AS sandbox
+
+FROM ${PYTHON_IMAGE}
+ARG ENGINE_VERSION=0.3.0
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PORT=8080 \
+    FTM_ENVIRONMENT=production \
+    FTM_SANDBOX_ROOTFS=/opt/sandbox-rootfs \
+    FTM_TESTS_VERSION=${ENGINE_VERSION}
+
+COPY workers/cloudrun/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --no-compile -r /app/requirements.txt && rm -rf /root/.cache
+
+COPY runners/ft_moulinette_runners/ /app/ft_moulinette_runners/
+COPY workers/cloudrun/runner_api/ /app/runner_api/
+COPY --from=sandbox / /opt/sandbox-rootfs/
+
+RUN set -eux; \
+    find /app -name '__pycache__' -prune -exec rm -rf {} +; \
+    useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin runner; \
+    ! command -v gcc; ! command -v cc; ! command -v make; ! command -v valgrind; \
+    test -x /opt/sandbox-rootfs/usr/bin/python3; test -f /opt/sandbox-rootfs/opt/ft-moulinette/bin/ft-moulinette
+
+USER 10001
+WORKDIR /app
+EXPOSE 8080
+CMD ["python", "-m", "runner_api.app"]

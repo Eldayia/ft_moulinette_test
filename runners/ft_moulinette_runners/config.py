@@ -52,7 +52,8 @@ def backend_from_env(environ=None, **overrides):
         from .mock import MockRunner
         return MockRunner(**overrides)
     if name == 'docker':
-        raise ConfigurationError('DockerRunner n’est pas encore disponible (phase 3 de docs/cloudrun.md).')
+        from .docker import DEFAULT_IMAGE, DockerRunner
+        return DockerRunner(environ.get('FTM_DOCKER_IMAGE') or DEFAULT_IMAGE, limits, **overrides)
     url = environ.get('CLOUD_RUN_URL', '').strip()
     if not url.startswith('https://'):
         raise ConfigurationError('CLOUD_RUN_URL doit être l’URL https:// du service runner-api.')
