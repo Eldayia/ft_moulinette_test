@@ -9,3 +9,9 @@ build/
 dist/
 nvim.log
 node_modules/
+# Déploiement : fichiers locaux, secrets et artefacts générés
+deploy/gcp/config.env
+deploy/gcp/images.env
+deploy/gcp/.rendered/
+deploy/ovh/worker.env
+deploy/ovh/secrets/

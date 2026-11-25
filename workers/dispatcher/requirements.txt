@@ -1,0 +1,18 @@
+# Worker VPS (RQ + CloudRunRunner), versions figées et vérifiées ensemble.
+certifi==2026.11.20
+cffi==2.1.1
+charset-normalizer==3.5.3
+click==8.5.1
+croniter==7.0.0
+cryptography==50.0.2
+google-auth==2.63.1
+idna==3.20
+pyasn1==0.6.5
+pyasn1_modules==0.4.2
+pycparser==3.12
+python-dateutil==4.0.0
+redis==8.2.0
+requests==2.34.2
+rq==3.0.0
+tzdata==2026.6
+urllib3==2.8.0

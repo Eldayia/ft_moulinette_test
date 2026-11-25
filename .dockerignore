@@ -5,6 +5,8 @@
 !runners/ft_moulinette_runners/
 !workers/cloudrun/runner_api/
 !workers/cloudrun/requirements.txt
+!workers/dispatcher/ftm_dispatcher/
+!workers/dispatcher/requirements.txt
 !docker/cloudrun/
 **/__pycache__
 **/*.pyc

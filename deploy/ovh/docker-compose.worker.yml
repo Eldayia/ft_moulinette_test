@@ -1,0 +1,41 @@
+# Fragment Docker Compose à fusionner avec le déploiement existant du VPS OVH :
+#   docker compose -f docker-compose.yml -f deploy/ovh/docker-compose.worker.yml up -d ftm-worker
+#
+# - Aucun port publié, pas de réseau « proxy » : le worker n'est jamais exposé (Nginx Proxy Manager inchangé).
+# - Le secret gcp_invoker n'est monté que dans ce service, en lecture seule.
+# - Le réseau interne de Redis est celui du déploiement existant (REDIS_NETWORK). Le worker a aussi besoin
+#   d'une sortie HTTPS vers *.run.app et les points d'accès Google (jetons) : réseau « egress » non interne.
+services:
+  ftm-worker:
+    build:
+      context: ../..
+      dockerfile: docker/ovh/Dockerfile.worker
+    image: ft-moulinette/worker:local
+    restart: unless-stopped
+    env_file: worker.env
+    secrets:
+      - source: gcp_invoker
+        target: gcp_invoker
+        mode: 0400
+        uid: "10001"
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 128
+    networks: [redis_internal, egress]
+
+networks:
+  redis_internal:
+    external: true
+    name: ${REDIS_NETWORK:-ftm_internal}
+  egress: {}
+
+secrets:
+  gcp_invoker:
+    # Clé JSON du compte ft-moulinette-invoker (mode key), ou configuration external_account (mode wif).
+    # Fichier hors dépôt, droits 0400 ; jamais monté dans le frontend ni dans l'API publique.
+    file: ./secrets/gcp_invoker.json
