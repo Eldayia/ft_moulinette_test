@@ -8,3 +8,4 @@ core.*
 build/
 dist/
 nvim.log
+node_modules/

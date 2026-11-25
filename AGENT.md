@@ -1,6 +1,6 @@
 # Guide des agents de code — ft-moulinette
 
-Ce document décrit le fonctionnement, les conventions et l’état du dépôt pour permettre à un autre agent de reprendre le travail. Il doit être lu avec [README.md](README.md), qui reste le guide d’installation et d’utilisation.
+Ce document décrit le fonctionnement, les conventions et l’état du dépôt pour permettre à un autre agent de reprendre le travail. Il doit être lu avec [cli/README.md](cli/README.md), qui reste le guide d’installation et d’utilisation de l’outil en ligne de commande.
 
 **État relevé le 25 novembre 2026.** Les constats ci-dessous proviennent du code et des vérifications locales ; les pistes de travail ne sont pas des fonctionnalités déjà livrées.
 
@@ -24,12 +24,21 @@ Le fonctionnement vise Linux, avec des outils compatibles GNU. La norme 4.1 est 
 6. Passer les commandes externes sous forme de listes d’arguments. Conserver les délais, la gestion des crashes et la terminaison des processus ; ne pas introduire d’interpolation de shell pour les chemins fournis par l’utilisateur.
 7. Préserver les chemins originaux dans les diagnostics. Les fichiers temporaires des bancs ne doivent pas être présentés comme des erreurs du projet étudiant.
 8. Ne pas traiter un contrôle désactivé ou indisponible comme une réussite. Préserver la distinction entre `skip`, `unavailable`, `blocked` et `fail`.
-9. Documenter les nouveaux comportements publics dans le README et mettre à jour ici les limites ou résultats de validation qui changent.
+9. Documenter les nouveaux comportements publics dans le README concerné (`cli/README.md` ou `web/README.md`) et mettre à jour ici les limites ou résultats de validation qui changent.
 10. En fin de tâche, indiquer les fichiers modifiés, les vérifications effectuées, leurs résultats et les limites restantes. Ne pas annoncer une suite entièrement verte si des tests échouent ou sont ignorés.
 
 Les projets C et leurs Makefiles exécutent du code avec les droits de l’utilisateur. Les copies temporaires préservent les liens symboliques : ce mécanisme n’est pas un confinement. Utiliser des fixtures temporaires et de confiance pour les tests de développement.
 
 ## 3. Carte du dépôt
+
+Le dépôt est organisé en deux parties :
+
+- `cli/` : l’outil existant (moteur Python, lanceur, tests, scripts d’installation et d’archive, intégrations éditeur). Toutes ses commandes se lancent **depuis `cli/`** ; ses scripts résolvent leurs chemins par rapport à leur propre emplacement et l’archive de `package.sh` reproduit le contenu de `cli/` à sa racine.
+- `web/` : la partie web, en cours de mise en place (voir section 6).
+
+À la racine : `README.md` (présentation et renvois), ce guide, `CLAUDE.md` et `.gitignore` commun.
+
+Les chemins du tableau suivant sont relatifs à `cli/`.
 
 | Chemin | Responsabilité |
 | --- | --- |
@@ -54,7 +63,7 @@ Les projets C et leurs Makefiles exécutent du code avec les droits de l’utili
 | `integrations/clion/` | Plugin Java, build local avec SDK installé, alternative Gradle et guide dédié |
 | `tests/` | Tests unittest, références C, mutations et fixtures temporaires |
 
-Les dossiers `dist/`, `build/`, `.venv/`, les caches Python, les VSIX et les journaux sont ignorés par Git. Un binaire ou une archive présent localement peut être antérieur aux sources.
+Les dossiers `dist/`, `build/`, `.venv/`, `node_modules/`, les caches Python, les VSIX et les journaux sont ignorés par Git. Un binaire ou une archive présent localement peut être antérieur aux sources.
 
 ## 4. Parcours d’exécution et invariants
 
@@ -112,13 +121,13 @@ Les formats invalides, bonus, flags/largeurs/précisions, format NULL, `%s` NULL
 
 ## 5. Installation, intégrations et livraison
 
-`install.sh` vérifie Python et `cc`, `make`, `ar`, `nm`. Il installe `ft_moulinette/` et `bin/` dans `~/.local/share/ft-moulinette`, ainsi que le README, le script d’installation et `pyproject.toml`. Le lanceur externe utilise le Python ayant exécuté l’installation.
+`install.sh` vérifie Python et `cc`, `make`, `ar`, `nm`. Il installe `cli/ft_moulinette/` et `cli/bin/` dans `~/.local/share/ft-moulinette`, ainsi que `cli/README.md`, le script d’installation et `pyproject.toml`. Le lanceur externe utilise le Python ayant exécuté l’installation.
 
 Préserver le comportement sans réseau, la gestion des chemins contenant espaces/apostrophes, le respect de `$ZDOTDIR`, la conservation des configurations shell existantes et l’idempotence du bloc d’alias. L’installateur ne copie ni les tests ni les intégrations.
 
-`package.sh` inclut les intégrations, mais pas les tests ni ce guide. Il peut inclure les builds d’intégrations déjà présents : inspecter leur fraîcheur avant une livraison. Ne pas supposer qu’une archive existante est à jour.
+`package.sh` crée `cli/dist/ft-moulinette.tar.gz` avec les intégrations, mais sans les tests, ce guide, ni la partie web. Il peut inclure les builds d’intégrations déjà présents : inspecter leur fraîcheur avant une livraison. Ne pas supposer qu’une archive existante est à jour.
 
-Commandes de fabrication, uniquement si la tâche le nécessite :
+Commandes de fabrication, depuis `cli/` et uniquement si la tâche le nécessite :
 
 ```sh
 sh package.sh
@@ -128,9 +137,19 @@ python3 integrations/clion/build_local.py --clion /opt/clion
 
 Les versions des composants ne sont actuellement pas alignées : paquet Python 0.3.0, extension VSCode 0.1.0, version Gradle CLion 0.2.0, ZIP CLion local 0.3.0. Le build CLion local utilise le SDK installé ; Gradle référence CLion 2025.3 et Java 21. Ne pas annoncer une version unique des intégrations sans mettre à jour les métadonnées concernées.
 
-## 6. Validation
+## 6. Partie web
 
-Depuis la racine du dépôt :
+Le dossier `web/` est réservé à l’interface web. Aucune pile technique n’est encore choisie ; ne pas en présumer une sans demande explicite. Ses contraintes de départ figurent dans [web/README.md](web/README.md) :
+
+- Consommer le moteur de `cli/` (JSON `--json` ou `ft_moulinette.engine.run()`) plutôt que dupliquer les contrôles ; ne pas modifier le schéma JSON sans examiner les intégrations éditeur.
+- Le moteur exécute du code C et des Makefiles non confinés : un service exposé à du code non fiable exige un confinement séparé.
+- Une exécution complète est longue et lance de nombreux processus : prévoir un traitement asynchrone.
+
+Les livrables de `cli/` (`install.sh`, `package.sh`) n’incluent pas `web/`.
+
+## 7. Validation
+
+Depuis le dossier `cli/` :
 
 ```sh
 python3 -m unittest discover -s tests -v
@@ -159,33 +178,35 @@ python3 -m unittest discover -s tests -p 'test_install.py' -v
 
 Les tests d’installation utilisent des dossiers personnels temporaires. Ne pas lancer `install.sh` sur la configuration réelle de l’utilisateur pour valider une modification de documentation.
 
-### Dernière validation observée : 25 novembre 2026
+### Dernière validation observée : 25 novembre 2026, après le passage à `cli/` + `web/`
 
-- `python3 -m unittest discover -s tests -v` : **43 tests exécutés, 40 réussis, 1 échec, 2 ignorés**, en environ 69 secondes.
-- Échec : `test_printf.PrintfTests.test_memory_reference_and_leak`, assertion `1 != 12`. Le moteur produit un résultat `memory:tool` indisponible au lieu des douze résultats mémoire attendus, car Valgrind échoue au démarrage.
-- Cause observée avec `valgrind --quiet /bin/true` : redirection obligatoire de `memcmp` introuvable dans `ld-linux-x86-64.so.2`. Valgrind mentionne des symboles de débogage glibc manquants comme cause possible. Aucun paquet système n’a été installé pendant ce travail.
-- Les deux tests mémoire de régression sont ignorés parce qu’ils vérifient aussi que Valgrind démarre. Le test mémoire Printf ne vérifie actuellement que la présence de l’exécutable avant de s’exécuter.
+Commandes lancées depuis `cli/` :
+
+- `python3 -m unittest discover -s tests` : **43 tests exécutés, 43 réussis, aucun ignoré**, en environ 53 secondes. Valgrind 3.25.1 démarre désormais (`valgrind --quiet /bin/true` renvoie 0) : les tests mémoire Libft et Printf ont donc réellement été exécutés.
 - `node --check integrations/vscode/extension.js` : réussi.
 - `sh -n install.sh package.sh` : réussi.
-- Chargement et interactions graphiques Neovim/VSCode/CLion : non vérifiés pendant ce travail. Plugins et archive de distribution non reconstruits.
+- `bin/ft-moulinette --help` lancé depuis un autre dossier : réussi.
+- `sh package.sh` sur une copie temporaire : l’archive contient `bin`, `ft_moulinette`, `install.sh`, `integrations`, `package.sh`, `pyproject.toml`, `README.md` à sa racine.
+- Chargement et interactions graphiques Neovim/VSCode/CLion : non vérifiés. Plugins et archive de distribution du dépôt non reconstruits.
 
-Ce résultat documente un environnement où Valgrind est installé mais inutilisable ; il ne valide pas les contrôles mémoire. Lors d’une nouvelle intervention, relancer les vérifications nécessaires et remplacer ce bilan si de nouvelles preuves sont disponibles.
+Un bilan précédent, dans un environnement où Valgrind ne démarrait pas (redirection `memcmp` introuvable dans `ld-linux-x86-64.so.2`), donnait 1 échec (`test_printf.PrintfTests.test_memory_reference_and_leak`) et 2 tests ignorés. Le test mémoire Printf ne vérifie toujours que la présence de l’exécutable Valgrind, et non son démarrage, avant de s’exécuter. Lors d’une nouvelle intervention, relancer les vérifications nécessaires et remplacer ce bilan si de nouvelles preuves sont disponibles.
 
-## 7. Avancement et prochaines étapes possibles
+## 8. Avancement et prochaines étapes possibles
 
 | Domaine | État du code | Limite ou travail restant |
 | --- | --- | --- |
 | CLI, texte et JSON | Implémentés | Maintenir les contrats consommés par les éditeurs |
 | Libft 43 fonctions | Bancs, prototypes, allocations et archive implémentés | La suite finie ne couvre pas tous les programmes possibles |
-| Printf 12 groupes | Tests binaires, libc, archive et isolation implémentés | Hors périmètre détaillé plus haut ; mémoire non validée dans cet environnement |
+| Printf 12 groupes | Tests binaires, libc, archive et isolation implémentés | Hors périmètre détaillé plus haut |
 | Makefile | Règles, effets, flags, relink et reconstructions implémentés | Audit PATH contournable par chemins absolus ou outils différents |
 | Installation locale | Script et test d’installation présents ; test passé | Bash/Zsh pour les alias ; intégrations conservées séparément |
 | Éditeurs | Intégrations et scripts de build présents | Validation graphique à effectuer dans chaque éditeur |
 | Documentation | README et présent guide rédigés | Actualiser au fil des changements réels |
+| Web | Dossier `web/` et contraintes initiales en place | Choisir la pile, définir le périmètre et l’isolation de l’exécution |
 
 Pistes de travail, à entreprendre seulement si elles correspondent à une demande :
 
-1. Valider la suite dans un environnement où Valgrind démarre, puis vérifier les contrôles de fuite et de dépassement mémoire.
+1. Vérifier plus finement les contrôles de fuite et de dépassement mémoire, maintenant que la suite passe avec un Valgrind fonctionnel.
 2. Harmoniser la condition de disponibilité du test mémoire Printf avec les tests de régression, tout en conservant un vrai test des douze groupes lorsque Valgrind fonctionne.
 3. Effectuer une réception graphique des trois intégrations : projet incomplet, fichier seul, erreur de compilation, correction et relance.
 4. Clarifier et harmoniser les versions et la génération des livrables avant une nouvelle distribution.

@@ -8,12 +8,14 @@ Le ZIP est compilé contre CLion **2026.3**, installé dans `/opt/clion`.
 2. Choisir `build/distributions/ft-moulinette-clion-0.3.0.zip` et redémarrer si demandé.
 3. Ouvrir le dossier Libft contenant son Makefile (pas le dossier de la moulinette).
 4. Tools → **Moulinette: tester le projet**.
-5. Indiquer le chemin absolu du lanceur `bin/ft-moulinette` de ce dépôt. Aucun pip/venv n’est nécessaire avec ce lanceur ; Python 3.10+ doit être accessible.
+5. Indiquer le chemin absolu du lanceur `cli/bin/ft-moulinette` de ce dépôt. Aucun pip/venv n’est nécessaire avec ce lanceur ; Python 3.10+ doit être accessible.
 6. Lire la console **Moulinette** en bas. Pour un seul fichier, l’ouvrir et choisir **Moulinette: tester le fichier**.
 
 Le chemin du lanceur est mémorisé par projet. Les fichiers ouverts sont sauvegardés avant le test. Fermer l’onglet de résultat arrête le processus s’il est encore actif.
 
 ## Reconstruire sans Gradle
+
+Depuis le dossier `cli/` du dépôt :
 
 ```sh
 python3 integrations/clion/build_local.py --clion /opt/clion
