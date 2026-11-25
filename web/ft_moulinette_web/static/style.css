@@ -211,6 +211,8 @@ input:focus-visible, select:focus-visible, button:focus-visible, summary:focus-v
   font-size: 0.87rem;
 }
 .secondary:hover { background: var(--surface-2); }
+.secondary.danger { color: var(--fail); }
+#history-note { margin-top: 10px; }
 .link { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 0.85rem; padding: 2px 4px; }
 .command {
   display: flex;

@@ -158,6 +158,8 @@ Invariants :
 - La validation serveur reprend les contraintes de la CLI : chemin absolu existant, dossier ou `.c`/`.h`, projet connu, entiers strictement positifs pour itérations et délai.
 - Protections à préserver : écoute locale par défaut, liste fermée de `Host`, refus des mutations d’une autre origine, JSON obligatoire et borné, liste fermée de fichiers statiques, construction du DOM par `textContent` (jamais `innerHTML` avec des données du rapport).
 - Annulation : SIGINT au groupe de processus du moteur (nettoyage des dossiers temporaires), puis SIGKILL après 5 secondes.
+- Arrêt du serveur : SIGINT et SIGTERM sont gérés explicitement (un SIGINT hérité ignoré d’un shell non interactif ne doit pas empêcher l’arrêt). L’exécution en cours est annulée et l’historique enregistré.
+- Historique : `--history`, par défaut `$XDG_STATE_HOME/ft-moulinette-web/history.json`, ou `--no-history`. Seules les exécutions terminées sont enregistrées (format `version: 1`), de façon atomique, avec les droits `600` dans un dossier `700`. Au chargement, toute entrée est revalidée et les invalides sont ignorées. Un fichier illisible est renommé en `.corrompu`, jamais écrasé. Les tests n’utilisent jamais l’emplacement par défaut. `DELETE /api/runs/<id>` annule ; `DELETE /api/history/<id>` supprime une exécution terminée.
 - `install.sh` et `package.sh` n’incluent pas `web/`.
 
 ## 7. Validation
@@ -196,7 +198,7 @@ python3 -m unittest discover -s tests -p 'test_install.py' -v
 | `test_install.py` | Installation/mise à jour, alias, chemins complexes et autonomie après suppression des sources |
 | `test_reviewed.py` | Compatibilité de l’option masquée, sans effacement des erreurs ni persistance |
 | `test_progress.py` | Flux `progress` identique aux résultats (Libft, Printf) ; `--progress` sur stderr sans changer le JSON |
-| `web/tests/test_server.py`, `web/tests/test_main.py` | Protections HTTP, validation, exécution réelle Libft (succès/échec), avancement partiel, moteur sans `--progress`, annulation, erreurs du moteur, choix du moteur, refus d’écoute réseau |
+| `web/tests/test_server.py`, `web/tests/test_main.py`, `web/tests/test_history.py` | Protections HTTP, validation, exécution réelle Libft (succès/échec), avancement partiel, moteur sans `--progress`, annulation, erreurs du moteur, choix du moteur, refus d’écoute réseau, arrêt par SIGTERM/SIGINT, historique (rechargement, suppression, droits, entrées invalides, fichier corrompu ou non inscriptible) |
 
 Les tests d’installation utilisent des dossiers personnels temporaires. Ne pas lancer `install.sh` sur la configuration réelle de l’utilisateur pour valider une modification de documentation.
 
@@ -213,12 +215,13 @@ Commandes lancées depuis `cli/` :
 
 Interface web, depuis `web/` :
 
-- `python3 -m unittest discover -s tests -v` : **18 tests exécutés, 18 réussis**, en environ 9 secondes.
+- `python3 -m unittest discover -s tests -v` : **33 tests exécutés, 33 réussis**, en environ 11 secondes.
 - `node --check ft_moulinette_web/static/app.js` : réussi.
 - Firefox headless piloté par WebDriver BiDi, sur une libft de 42 fonctions avec erreurs volontaires (`ft_strlen` faux, `ft_toupper` absent) : rapport affiché, filtres, recherche, détails, lancement depuis le formulaire, état en cours, annulation et refus d’un chemin introuvable vérifiés. Exécution complète en 55 secondes. Aucun dossier temporaire ni processus du moteur restant après l’annulation.
 - `pip install -e ../cli -e .` dans un environnement virtuel temporaire : commande `ft-moulinette-web` et fichiers statiques disponibles.
 - Avancement en direct vérifié dans Firefox : nombre de contrôles, statuts et problèmes déjà détectés pendant l’exécution, puis rapport complet.
 - Thème sombre (préférence `ui.systemUsesDarkTheme`) et largeur de 400 px vérifiés : ordre formulaire → rapport → historique, défilement vers le rapport après envoi.
+- Historique de bout en bout : exécution réelle, arrêt par SIGINT, fichier `600`/`700` au format attendu, rechargement et rapport affiché après redémarrage, suppression depuis la page, absence persistante après un nouveau redémarrage.
 - Non vérifiés : navigateurs autres que Firefox.
 
 Un bilan précédent, dans un environnement où Valgrind ne démarrait pas (redirection `memcmp` introuvable dans `ld-linux-x86-64.so.2`), donnait 1 échec (`test_printf.PrintfTests.test_memory_reference_and_leak`) et 2 tests ignorés. Le test mémoire Printf ne vérifie toujours que la présence de l’exécutable Valgrind, et non son démarrage, avant de s’exécuter. Lors d’une nouvelle intervention, relancer les vérifications nécessaires et remplacer ce bilan si de nouvelles preuves sont disponibles.
@@ -234,7 +237,7 @@ Un bilan précédent, dans un environnement où Valgrind ne démarrait pas (redi
 | Installation locale | Script et test d’installation présents ; test passé | Bash/Zsh pour les alias ; intégrations conservées séparément |
 | Éditeurs | Intégrations et scripts de build présents | Validation graphique à effectuer dans chaque éditeur |
 | Documentation | README et présent guide rédigés | Actualiser au fil des changements réels |
-| Web | Interface locale, API JSON, file, avancement en direct, annulation et tests en place | Pas d’envoi de fichiers ni de confinement pour un usage réseau ; historique non persistant |
+| Web | Interface locale, API JSON, file, avancement en direct, annulation, historique persistant et tests en place | Pas d’envoi de fichiers ni de confinement pour un usage réseau |
 
 Pistes de travail, à entreprendre seulement si elles correspondent à une demande :
 
@@ -244,6 +247,6 @@ Pistes de travail, à entreprendre seulement si elles correspondent à une deman
 4. Clarifier et harmoniser les versions et la génération des livrables avant une nouvelle distribution.
 5. Étendre les bancs à partir de régressions démontrées ou de nouvelles versions de sujet, avec des attentes explicites et des tests de référence.
 
-6. Web : historique persistant entre deux démarrages ; mode multi-utilisateur seulement avec un confinement réel de l’exécution.
+6. Web : mode multi-utilisateur, seulement avec un confinement réel de l’exécution.
 
 Ne pas déclarer ces étapes terminées sans preuve. Ne pas élargir implicitement le périmètre à d’autres projets 42 ou à une plateforme supplémentaire.

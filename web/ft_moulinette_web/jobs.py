@@ -1,6 +1,7 @@
 """File d'exécutions : chaque exécution lance la CLI avec --json dans un sous-processus."""
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -24,6 +25,9 @@ MAX_HISTORY = 50
 # Statuts qui donnent le code de sortie 1 côté CLI.
 PROBLEMS = ('fail', 'missing', 'blocked', 'unavailable')
 MAX_STDERR_LINES = 200
+HISTORY_VERSION = 1
+JOB_ID = re.compile(r'^[0-9a-f]{12}$')
+FINISHED = ('done', 'error', 'cancelled')
 EVENT_PREFIX = '{"event"'
 
 try:
@@ -80,6 +84,22 @@ def validate(payload):
     )
 
 
+def validate_stored(options):
+    """Options relues depuis le disque : même forme qu'à l'envoi, sans exiger que la cible existe encore."""
+    if not isinstance(options, dict) or not isinstance(options.get('target'), str):
+        raise RunError('options invalides')
+    if options.get('project') not in PROJECTS:
+        raise RunError('options invalides')
+    for name in ('norm', 'memory', 'build'):
+        if not isinstance(options.get(name), bool):
+            raise RunError('options invalides')
+    for name in ('iterations', 'seed', 'timeout'):
+        if isinstance(options.get(name), bool) or not isinstance(options.get(name), int):
+            raise RunError('options invalides')
+    return {key: options[key] for key in
+            ('target', 'project', 'norm', 'memory', 'build', 'iterations', 'seed', 'timeout')}
+
+
 def cli_arguments(options):
     args = [options['target'], '--project', options['project']]
     args += [flag for flag, enabled in (('--no-norm', options['norm']), ('--no-memory', options['memory']),
@@ -116,6 +136,12 @@ def annotate(report, target):
     return report
 
 
+def default_history_path():
+    """Fichier d'état propre à l'utilisateur, hors du dépôt (XDG_STATE_HOME)."""
+    base = os.environ.get('XDG_STATE_HOME') or str(Path.home() / '.local' / 'state')
+    return Path(base) / 'ft-moulinette-web' / 'history.json'
+
+
 def supports_progress(engine, timeout=10):
     """Un moteur plus ancien refuserait --progress : on le détecte via --help."""
     try:
@@ -141,6 +167,34 @@ class Job:
         self.partial = []          # résultats problématiques reçus pendant l'exécution
         self.counts = Counter()    # statuts reçus pendant l'exécution
 
+    @classmethod
+    def restore(cls, data):
+        """Reconstruit une exécution terminée depuis l'historique ; None si l'entrée est invalide."""
+        if not isinstance(data, dict) or data.get('status') not in FINISHED:
+            return None
+        if not isinstance(data.get('id'), str) or not JOB_ID.match(data['id']):
+            return None
+        options = data.get('options')
+        try:
+            options = validate_stored(options)
+        except RunError:
+            return None
+        job = cls(options)
+        job.id, job.status = data['id'], data['status']
+        for name in ('created', 'started', 'finished'):
+            value = data.get(name)
+            setattr(job, name, value if isinstance(value, (int, float)) and not isinstance(value, bool) else None)
+        if job.created is None:
+            return None
+        job.exit_code = data.get('exit_code') if isinstance(data.get('exit_code'), int) else None
+        job.error = data.get('error') if isinstance(data.get('error'), str) else None
+        report = data.get('report')
+        if isinstance(report, dict) and isinstance(report.get('results'), list):
+            job.report = report
+        elif job.status == 'done':
+            return None
+        return job
+
     def to_dict(self, full=True):
         data = dict(id=self.id, status=self.status, options=self.options, created=self.created,
                     started=self.started, finished=self.finished, exit_code=self.exit_code,
@@ -160,11 +214,14 @@ class Job:
 class JobManager:
     """Exécute les demandes une par une : chaque exécution est déjà lourde en processus."""
 
-    def __init__(self, engine, grace=5.0, progress=None):
+    def __init__(self, engine, grace=5.0, progress=None, history=None):
         self.engine = list(engine)
         self.grace = grace
         self.progress = supports_progress(self.engine) if progress is None else progress
+        self.history = Path(history) if history else None
+        self.history_error = None
         self.jobs = OrderedDict()
+        self._load()
         self.lock = threading.Lock()
         self.wakeup = threading.Condition(self.lock)
         self.closed = False
@@ -198,10 +255,23 @@ class JobManager:
                 return None
             if job.status == 'queued':
                 job.status, job.finished = 'cancelled', time.time()
+                self._save()
             elif job.status == 'running':
                 job.cancel_requested = True
                 self._interrupt(job)
             return job.to_dict(False)
+
+    def remove(self, job_id):
+        """Retire une exécution terminée de l'historique. None si inconnue, False si encore active."""
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job is None:
+                return None
+            if job.status in ACTIVE:
+                return False
+            del self.jobs[job_id]
+            self._save()
+            return True
 
     def close(self):
         with self.lock:
@@ -214,6 +284,55 @@ class JobManager:
                     self._interrupt(job)
             self.wakeup.notify_all()
         self.worker.join(self.grace + 5)
+        with self.lock:
+            self._save()
+
+    # --- historique sur disque ---------------------------------------------
+    def _load(self):
+        if self.history is None or not self.history.exists():
+            return
+        try:
+            data = json.loads(self.history.read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            # Fichier illisible : on le garde de côté plutôt que de l'écraser.
+            self.history_error = f'Historique illisible ({exc}) ; conservé sous {self.history}.corrompu'
+            try:
+                os.replace(self.history, self.history.with_name(self.history.name + '.corrompu'))
+            except OSError:
+                self.history = None
+            return
+        runs = data.get('runs') if isinstance(data, dict) and data.get('version') == HISTORY_VERSION else None
+        jobs = [job for job in map(Job.restore, runs if isinstance(runs, list) else []) if job]
+        for job in sorted(jobs, key=lambda j: j.created)[-MAX_HISTORY:]:
+            self.jobs[job.id] = job
+
+    def _save(self):
+        """Écrit les exécutions terminées de façon atomique ; appelé avec le verrou."""
+        if self.history is None:
+            return
+        runs = [job.to_dict(True) for job in self.jobs.values() if job.status in FINISHED]
+        for run in runs:
+            run.pop('command', None)
+            run.pop('summary', None)
+            run.pop('module', None)
+            run.pop('progress', None)
+        data = json.dumps(dict(version=HISTORY_VERSION, runs=runs), ensure_ascii=False)
+        temporary = self.history.with_name(self.history.name + '.tmp')
+        try:
+            self.history.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.history)
+            self.history_error = None
+        except OSError as exc:
+            self.history_error = f'Historique non enregistré : {exc}'
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
     def _trim(self):
         finished = [key for key, job in self.jobs.items() if job.status not in ACTIVE]
@@ -259,6 +378,7 @@ class JobManager:
                 except OSError as exc:
                     job.status, job.finished = 'error', time.time()
                     job.error = f'Impossible de lancer le moteur : {exc}'
+                    self._save()
                     continue
             stderr = []
             reader = threading.Thread(target=self._read_events, args=(job, stderr), daemon=True)
@@ -270,6 +390,9 @@ class JobManager:
             job.process.stderr.close()
             with self.lock:
                 self._finish(job, job.process.returncode, stdout, '\n'.join(stderr).encode())
+                job.process = None
+                self._trim()
+                self._save()
 
     def _read_events(self, job, other):
         """Lit stderr ligne à ligne : événements --progress, sinon texte gardé pour le diagnostic."""

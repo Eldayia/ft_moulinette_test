@@ -184,9 +184,20 @@ function syncRun(job) {
   renderRuns();
 }
 
+function renderHistoryNote(history) {
+  const node = $('history-note');
+  if (!history) return;
+  const text = history.error || (history.enabled ? '' : 'Historique non conservé : il sera perdu à l’arrêt du serveur.');
+  node.textContent = text;
+  node.hidden = !text;
+  node.classList.toggle('form-error', Boolean(history.error));
+}
+
 async function refreshRuns() {
   try {
-    state.runs = (await api('/api/runs')).runs;
+    const data = await api('/api/runs');
+    state.runs = data.runs;
+    renderHistoryNote(data.history);
     renderRuns();
   } catch { /* le serveur a pu s'arrêter ; on réessaiera au prochain sondage */ }
 }
@@ -275,7 +286,10 @@ function renderResult() {
       ACTIVE.has(job.status)
         ? el('button', { type: 'button', class: 'secondary', onclick: () => cancelRun(job.id), text: 'Annuler' })
         : el('button', { type: 'button', class: 'secondary', onclick: () => rerun(job), text: 'Relancer' }),
-      el('button', { type: 'button', class: 'secondary', onclick: () => fillForm(job.options), text: 'Reprendre les réglages' })));
+      el('button', { type: 'button', class: 'secondary', onclick: () => fillForm(job.options), text: 'Reprendre les réglages' }),
+      !ACTIVE.has(job.status) && el('button', {
+        type: 'button', class: 'secondary danger', onclick: () => removeRun(job.id), text: 'Supprimer',
+      })));
 
   const command = el('div', { class: 'command' },
     el('code', { text: job.command }),
@@ -431,6 +445,26 @@ function rowView(row) {
 async function cancelRun(id) {
   try { await api(`/api/runs/${id}`, { method: 'DELETE' }); } catch (error) { showFormError(error.message); }
   poll();
+}
+
+const EMPTY_TITLE = 'Aucun rapport sélectionné';
+const EMPTY_TEXT = 'Indique le chemin de ta libft ou de ton ft_printf, puis lance la moulinette.';
+
+async function removeRun(id) {
+  if (!confirm('Supprimer cette exécution de l’historique ?')) return;
+  try {
+    await api(`/api/history/${id}`, { method: 'DELETE' });
+  } catch (error) {
+    return showFormError(error.message);
+  }
+  await refreshRuns();
+  if (state.runs.length) return select(state.runs[0].id);
+  clearTimeout(state.pollTimer);
+  clearInterval(state.clockTimer);
+  Object.assign(state, { selected: null, job: null, renderedKey: null });
+  history.replaceState(null, '', location.pathname);
+  renderRuns();
+  renderMessage(EMPTY_TITLE, EMPTY_TEXT);
 }
 
 function rerun(job) {

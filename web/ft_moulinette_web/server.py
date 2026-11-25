@@ -23,6 +23,7 @@ SECURITY_HEADERS = {
 MAX_BODY = 64 * 1024
 REJECTED = object()  # read_json a déjà envoyé la réponse d'erreur
 RUN_PATH = re.compile(r'^/api/runs/([0-9a-f]{12})$')
+RUN_HISTORY_PATH = re.compile(r'^/api/history/([0-9a-f]{12})$')
 
 
 def is_loopback(host):
@@ -37,10 +38,10 @@ def is_loopback(host):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, engine, allow_remote=False, progress=None):
+    def __init__(self, address, engine, allow_remote=False, progress=None, history=None):
         super().__init__(address, Handler)
         self.allow_remote = allow_remote
-        self.manager = JobManager(engine, progress=progress)
+        self.manager = JobManager(engine, progress=progress, history=history)
         port = self.server_address[1]
         self.allowed_hosts = {f'{name}:{port}' for name in ('localhost', '127.0.0.1', '[::1]')}
 
@@ -63,7 +64,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         for name, value in {**SECURITY_HEADERS, **(headers or {})}.items():
             self.send_header(name, value)
-        self.send_header('Content-Type', content_type)
+        if status != HTTPStatus.NO_CONTENT:
+            self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         if self.command != 'HEAD':
@@ -122,7 +124,9 @@ class Handler(BaseHTTPRequestHandler):
             body = resources.files(__package__).joinpath('static', name).read_bytes()
             return self.send(HTTPStatus.OK, body, content_type)
         if path == '/api/runs':
-            return self.send_json(HTTPStatus.OK, dict(runs=self.server.manager.list()))
+            manager = self.server.manager
+            return self.send_json(HTTPStatus.OK, dict(runs=manager.list(), history=dict(
+                enabled=manager.history is not None, error=manager.history_error)))
         match = RUN_PATH.match(path)
         if match:
             job = self.server.manager.get(match.group(1))
@@ -149,8 +153,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if not self.trusted(True):
             return
-        match = RUN_PATH.match(self.path.split('?', 1)[0])
-        job = self.server.manager.cancel(match.group(1)) if match else None
-        if job is None:
-            return self.send_error_json(HTTPStatus.NOT_FOUND, 'Exécution inconnue.')
-        self.send_json(HTTPStatus.OK, job)
+        path = self.path.split('?', 1)[0]
+        match = RUN_PATH.match(path)
+        if match:  # annulation d'une exécution en attente ou en cours
+            job = self.server.manager.cancel(match.group(1))
+            if job is None:
+                return self.send_error_json(HTTPStatus.NOT_FOUND, 'Exécution inconnue.')
+            return self.send_json(HTTPStatus.OK, job)
+        match = RUN_HISTORY_PATH.match(path)
+        if match:  # suppression d'une exécution terminée
+            removed = self.server.manager.remove(match.group(1))
+            if removed is None:
+                return self.send_error_json(HTTPStatus.NOT_FOUND, 'Exécution inconnue.')
+            if removed is False:
+                return self.send_error_json(HTTPStatus.CONFLICT, 'Annuler l’exécution avant de la supprimer.')
+            return self.send(HTTPStatus.NO_CONTENT)
+        self.send_error_json(HTTPStatus.NOT_FOUND, 'Ressource introuvable.')
