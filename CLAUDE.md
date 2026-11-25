@@ -53,6 +53,13 @@ Always run tests via `discover -s tests` from `cli/`: test modules import `refer
 - `deploy/gcp/*.sh` are never run against Google without the user's explicit go-ahead (billable resources); `render.py` tests: `python3 -m unittest discover -s deploy/gcp/tests`. `shellcheck -x -P SCRIPTDIR deploy/gcp/*.sh` must stay clean.
 - Adversarial tests (`FTM_ADVERSARIAL_TESTS=docker`, smoke probes) need explicit authorization; never on the production VPS.
 
+### Platform (VPS web, `platform/`)
+
+- API: `cd platform/api && .venv/bin/python -m unittest discover -s tests -v` (starts pinned Postgres and Redis containers). FastAPI app factory `ftm_platform.app:create_app`; worker tasks in `ftm_platform/tasks.py`; migrations: edit `models.py`, then autogenerate an Alembic revision against a throwaway Postgres; `test_migrations_match_models` runs `alembic check`.
+- Frontend: `cd platform/web && npm run check && npm run build`. SvelteKit **3** (config lives in `vite.config.ts` via `sveltekit({...})`; `#lib/x.ts` imports need explicit extensions). Never use `{@html}`; keep the CSP hash-only (no inline styles).
+- The public API must never hold Google credentials or execute submissions; only `ftm-worker` mounts `gcp_invoker`. Stages shown in the UI must be the ones the worker actually reached.
+- Local full stack: `deploy/ovh/docker-compose.local.yml` (mock backend, http://127.0.0.1:8088).
+
 ### CLI architecture in one pass
 
 - `__main__.main()` → `engine.run()` → `engine.detect_project()` picks Printf (via `ft_printf.h` / `libftprintf.a` markers) or defaults to Libft; Printf is delegated to `printf.run_printf()`.

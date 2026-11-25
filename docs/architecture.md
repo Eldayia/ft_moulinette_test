@@ -2,7 +2,7 @@
 
 ```
                 ┌────────────────────────── VPS OVH (Docker Compose) ──────────────────────────┐
- navigateur ──► │ Nginx Proxy Manager ─► frontend / API publique (à venir, hors dépôt)          │
+ navigateur ──► │ Nginx Proxy Manager ─► ftm-web (SvelteKit) ─► ftm-api (FastAPI, PostgreSQL)    │
  éditeurs   ──► │                           │  valide l'archive, réserve les quotas (Redis)      │
                 │                           ▼                                                   │
                 │                     Redis / RQ  ◄──── ftm-worker (workers/dispatcher)        │
@@ -25,7 +25,9 @@
 | `web/` | Interface web **locale** (outil personnel, boucle locale), pas la plateforme publique | Bibliothèque standard |
 | `runners/` | Contrat `ExecutionBackend`, protocole v1, validation des archives, moteurs `local`, `docker`, `mock`, `cloudrun` | Bibliothèque standard ; `google-auth` pour `cloudrun` |
 | `workers/cloudrun/` | Service runner-api sur Cloud Run (FastAPI) : orchestration des sandboxes | FastAPI, uvicorn (figés) |
-| `workers/dispatcher/` | Worker du VPS : quotas Redis, mise en file RQ, tâche d’exécution distante | rq, redis, google-auth (figés) |
+| `workers/dispatcher/` | Quotas Redis, mise en file RQ, tâche d’exécution distante (réutilisés par la plateforme) | rq, redis, google-auth (figés) |
+| `platform/api/` | API publique (FastAPI, PostgreSQL), tâches du worker, administration | FastAPI, SQLAlchemy, psycopg, Alembic (figés) |
+| `platform/web/` | Frontend SvelteKit statique | SvelteKit 3, Svelte 5 |
 | `docker/cloudrun/` | Images `sandbox-c` (outils C, moteur) et `runner-api` (composants de confiance) | — |
 | `docker/ovh/` | Image du worker VPS | — |
 | `deploy/gcp/` | Scripts de préparation, construction, déploiement et validation GCP | gcloud, Docker |
@@ -45,7 +47,7 @@
 2. Le worker exécute `execute_submission` : interrupteur, construction du moteur depuis l’environnement, puis `CloudRunRunner.execute`.
 3. `CloudRunRunner` revalide l’archive, obtient l’ID token (en cache) et envoie `POST /v1/execute` en multipart. Il ne relance la requête que si elle n’a certainement pas été transmise ou en cas de 429.
 4. runner-api revalide, extrait l’archive dans `/tmp/ftm/<id>/input`, lance `sandbox do` et applique le délai global. Il supprime ensuite la sandbox et l’espace de travail, valide le rapport et répond.
-5. Le worker reçoit un `ExecutionResult` validé (`outcome`, `report`, `metadata`, `error`) et libère la réservation de quota. Le résultat est conservé par RQ 7 jours ; l’enregistrement en PostgreSQL relève de l’API (hors dépôt).
+5. Le worker reçoit un `ExecutionResult` validé (`outcome`, `report`, `metadata`, `error`) et libère la réservation de quota. La tâche de la plateforme (`platform/api/ftm_platform/tasks.py`) enregistre le résultat dans PostgreSQL, efface l’archive et met à jour l’étape affichée.
 
 ## Correspondance des résultats
 

@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+# Image Python de la plateforme : API publique (ftm-api), migrations (ftm-migrate) et worker (ftm-worker).
+# Aucun outil de compilation : aucune soumission n'est compilée ni exécutée sur le VPS (vérifié ci-dessous).
+# Les identifiants Google ne sont jamais dans l'image : secret gcp_invoker monté dans le seul worker.
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:44cf1793efa7c7a476bb0f2cff81443f4a072c90c1cb127e2924933daa3e8c64
+FROM ${PYTHON_IMAGE}
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+COPY platform/api/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --no-compile -r /app/requirements.txt && rm -rf /root/.cache
+COPY runners/ft_moulinette_runners/ /app/ft_moulinette_runners/
+COPY workers/dispatcher/ftm_dispatcher/ /app/ftm_dispatcher/
+COPY platform/api/ftm_platform/ /app/ftm_platform/
+RUN set -eux; find /app -name '__pycache__' -prune -exec rm -rf {} +; \
+    useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin ftm; \
+    ! command -v gcc; ! command -v cc; ! command -v make
+USER 10001
+WORKDIR /app
+EXPOSE 8000
+CMD ["uvicorn", "--factory", "ftm_platform.app:create_app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header", "--no-access-log"]

@@ -1,0 +1,151 @@
+# Plateforme ft-moulinette sur le VPS OVH (Debian 12, Docker Compose, Nginx Proxy Manager).
+#
+#   docker compose -f deploy/ovh/docker-compose.platform.yml --env-file deploy/ovh/platform.env up -d --build
+#
+# Réseaux :
+# - proxy (externe, celui de Nginx Proxy Manager) : uniquement ftm-web. Aucun port publié par ce fichier.
+# - ftm_internal (interne, sans accès Internet) : web, api, worker, migrate, postgres, redis.
+# - ftm_egress : uniquement ftm-worker, pour joindre Cloud Run et les points d'accès Google (jetons).
+# Secrets :
+# - postgres_password : postgres, api, migrate, worker.
+# - gcp_invoker : uniquement ftm-worker (jamais le frontend ni l'API publique).
+name: ftm
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+x-platform-env: &platform-env
+  DATABASE_URL: postgresql+psycopg://ftm:{password}@postgres:5432/ftm
+  DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+  REDIS_URL: redis://redis:6379/0
+  FTM_ENVIRONMENT: production
+  FTM_PUBLIC_ORIGIN: ${FTM_PUBLIC_ORIGIN:?FTM_PUBLIC_ORIGIN requis (https://…)}
+  FTM_TRUST_PROXY: "1"
+  FTM_COST_PER_SECOND: ${FTM_COST_PER_SECOND:-0}
+  FTM_EXECUTIONS_DISABLED: ${FTM_EXECUTIONS_DISABLED:-}
+  FTM_QUOTA_USER_DAILY: ${FTM_QUOTA_USER_DAILY:-20}
+  FTM_QUOTA_USER_CONCURRENT: ${FTM_QUOTA_USER_CONCURRENT:-1}
+  FTM_QUOTA_GLOBAL_DAILY: ${FTM_QUOTA_GLOBAL_DAILY:-300}
+  FTM_QUOTA_MAX_IN_FLIGHT: ${FTM_QUOTA_MAX_IN_FLIGHT:-20}
+  FTM_QUOTA_MIN_INTERVAL: ${FTM_QUOTA_MIN_INTERVAL:-10}
+  EXECUTION_TIMEOUT: ${EXECUTION_TIMEOUT:-60}
+
+services:
+  ftm-web:
+    <<: *hardening
+    build: { context: ../.., dockerfile: docker/ovh/Dockerfile.web }
+    image: ft-moulinette/web:local
+    tmpfs: ["/tmp:size=16m,nosuid,nodev"]
+    mem_limit: 128m
+    depends_on: { ftm-api: { condition: service_healthy } }
+    networks: [proxy, ftm_internal]
+
+  ftm-api:
+    <<: *hardening
+    build: { context: ../.., dockerfile: docker/ovh/Dockerfile.platform }
+    image: ft-moulinette/platform:local
+    environment: *platform-env
+    secrets: [postgres_password]
+    tmpfs: ["/tmp:size=64m,nosuid,nodev"]
+    mem_limit: 512m
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      ftm-migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    networks: [ftm_internal]
+
+  ftm-migrate:
+    image: ft-moulinette/platform:local
+    build: { context: ../.., dockerfile: docker/ovh/Dockerfile.platform }
+    command: ["python", "-m", "ftm_platform.manage", "migrate"]
+    environment: *platform-env
+    secrets: [postgres_password]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [ftm_internal]
+
+  ftm-worker:
+    <<: *hardening
+    image: ft-moulinette/platform:local
+    build: { context: ../.., dockerfile: docker/ovh/Dockerfile.platform }
+    command: ["sh", "-c", "exec rq worker-pool --url \"$$REDIS_URL\" --num-workers \"$${MAX_CONCURRENT_JOBS:-2}\" ftm-submissions"]
+    environment:
+      <<: *platform-env
+      EXECUTION_BACKEND: ${EXECUTION_BACKEND:-cloudrun}   # FTM_ENVIRONMENT=production refuse tout autre moteur
+      CLOUD_RUN_URL: ${CLOUD_RUN_URL:?CLOUD_RUN_URL requis}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_REGION: ${GCP_REGION:-europe-west1}
+      GCP_AUTH_MODE: ${GCP_AUTH_MODE:-key}
+      GCP_INVOKER_SERVICE_ACCOUNT: ${GCP_INVOKER_SERVICE_ACCOUNT:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp_invoker
+      MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-2}
+    secrets:
+      - postgres_password
+      - { source: gcp_invoker, target: gcp_invoker, mode: 0400, uid: "10001" }
+    tmpfs: ["/tmp:size=64m,nosuid,nodev"]
+    mem_limit: 512m
+    pids_limit: 128
+    depends_on:
+      ftm-migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    networks: [ftm_internal, ftm_egress]
+
+  postgres:
+    image: postgres:17-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ftm
+      POSTGRES_DB: ftm
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "ftm", "-d", "ftm"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 1g
+    networks: [ftm_internal]
+
+  redis:
+    image: redis:7.4-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: 320m
+    networks: [ftm_internal]
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-proxy}
+  ftm_internal:
+    internal: true
+  ftm_egress: {}
+
+volumes:
+  postgres-data: {}
+  redis-data: {}
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  gcp_invoker:
+    # Clé JSON du compte ft-moulinette-invoker (GCP_AUTH_MODE=key) ou configuration external_account (wif).
+    file: ./secrets/gcp_invoker.json

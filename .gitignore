@@ -13,5 +13,6 @@ node_modules/
 deploy/gcp/config.env
 deploy/gcp/images.env
 deploy/gcp/.rendered/
-deploy/ovh/worker.env
+deploy/ovh/platform.env
+deploy/ovh/local.env
 deploy/ovh/secrets/

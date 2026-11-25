@@ -1,0 +1,24 @@
+# Surcharge de DÉVELOPPEMENT LOCAL uniquement : moteur « mock » (aucune exécution de code, aucun appel Google),
+# cookies non sécurisés (HTTP), frontend publié sur 127.0.0.1:8088, réseau proxy local.
+#
+#   docker compose -f deploy/ovh/docker-compose.platform.yml -f deploy/ovh/docker-compose.local.yml \
+#       --env-file deploy/ovh/local.env up -d --build
+services:
+  ftm-web:
+    ports: ["127.0.0.1:8088:8080"]
+  ftm-api:
+    environment:
+      FTM_ENVIRONMENT: development
+      FTM_COOKIE_SECURE: "0"
+  ftm-migrate:
+    environment:
+      FTM_ENVIRONMENT: development
+  ftm-worker:
+    environment:
+      FTM_ENVIRONMENT: development
+      EXECUTION_BACKEND: mock
+
+networks:
+  proxy:
+    external: false
+    name: ftm_local_proxy

@@ -2,7 +2,7 @@
 
 Ce document suit la mission décrite dans [AGENT.md](../AGENT.md). Il distingue ce qui est **vérifié dans la documentation officielle**, ce qui est **implémenté et testé localement**, et ce qui **reste à valider sur Google Cloud**. Aucun test local ou mock ne vaut validation de l’isolation Cloud Run.
 
-**Statut au 25 novembre 2026 :** phases 1 à 5 terminées et vérifiées localement ; phase 6 bloquée par l’absence de l’API publique OVH ; phase 7 (validation réelle) en attente de ton projet GCP. **L’isolation Cloud Run n’est pas validée.** Aucune ressource Google Cloud n’a été créée. Aucun accès Google Cloud (ni `gcloud`, ni credentials) n’est disponible dans l’environnement de développement.
+**Statut au 25 novembre 2026 :** phases 1 à 5 terminées et vérifiées localement ; phase 6 : plateforme web du VPS livrée et testée de bout en bout en local (moteur `mock`), mode distant de la CLI et des éditeurs à faire ; phase 7 (validation réelle) en attente de ton projet GCP. **L’isolation Cloud Run n’est pas validée.** Aucune ressource Google Cloud n’a été créée. Aucun accès Google Cloud (ni `gcloud`, ni credentials) n’est disponible dans l’environnement de développement.
 
 ## 1. Audit du dépôt
 
@@ -117,7 +117,7 @@ Le résultat global (`outcome`) est dérivé des contrôles par du code de confi
 | 3 | Images Docker, rootfs sandbox, limites, tests de sécurité locaux | Fait localement (voir §5.3) ; tests adversariaux écrits, non exécutés (autorisation requise) |
 | 4 | Fonction de tâche RQ, Compose OVH, configuration, quotas | Fait (`workers/dispatcher/`, 15 tests avec Redis et RQ réels, image worker, fragment Compose validé) |
 | 5 | Scripts GCP, CI GitHub Actions, documentation coûts et sécurité | Fait (`deploy/gcp/`, `.github/workflows/`, `docs/`) ; scripts GCP jamais exécutés contre Google |
-| 6 | Mode distant des intégrations (via l’API OVH), observabilité, interface | Bloqué : l’API publique OVH, l’authentification des utilisateurs et PostgreSQL n’existent pas dans le dépôt. Les intégrations doivent appeler cette API, jamais Cloud Run. Les journaux structurés et le format des résultats sont prêts. |
+| 6 | Mode distant des intégrations (via l’API OVH), observabilité, interface | Plateforme web livrée (`platform/`, voir §5.5). À faire : mode distant de la CLI et des éditeurs, qui utiliseront les jetons personnels de l’API. |
 | 7 | Validation réelle sur Google Cloud | Nécessite ton accès GCP et ton autorisation |
 
 ### 5.1 Phase 1 : livré
@@ -146,10 +146,18 @@ Le résultat global (`outcome`) est dérivé des contrôles par du code de confi
 ### 5.4 Phases 4 et 5 : livré
 
 - `workers/dispatcher/` : quotas atomiques (Lua Redis), mise en file RQ unique par `submission_id`, tâche sans nouvelle tentative automatique ; testé contre Redis 7.4 et RQ 3.0.0 réels.
-- `docker/ovh/Dockerfile.worker`, `deploy/ovh/docker-compose.worker.yml` (validé par `docker compose config`), `deploy/ovh/worker.env.example`.
+- Image du worker et fragment Compose, depuis remplacés par la plateforme complète (§5.5).
 - `deploy/gcp/` : `bootstrap.sh`, `build.sh` (exécuté localement sans `--push` : construction, tests, échec fermé), `deploy.sh`, `smoke-test.sh` et `smoke_test.py`, `render.py` (testé), `service.yaml.template`, `cleanup-policy.json` ; `shellcheck` propre.
 - `.github/workflows/ci.yml` (tous les tests, `shellcheck`, `pip-audit`, construction des images, Trivy) et `deploy-gcp.yml` (manuel, OIDC et WIF, sans clé). Non exécutés : aucun dépôt GitHub distant n’est configuré.
 - Documentation : [architecture.md](architecture.md), [cloudrun-security.md](cloudrun-security.md), [cloudrun-costs.md](cloudrun-costs.md) (sans tarif : page officielle illisible automatiquement), [docker-deployment.md](docker-deployment.md), [deploy/gcp/README.md](../deploy/gcp/README.md).
+
+### 5.5 Phase 6 : plateforme web du VPS
+
+- `platform/api/ftm_platform/` : API publique FastAPI, PostgreSQL 17 (SQLAlchemy 2.1, migration Alembic générée puis vérifiée par `alembic check`), comptes `scrypt`, sessions `HttpOnly`/`SameSite=Strict`, protection CSRF, limitation des tentatives de connexion, jetons personnels pour la CLI et les éditeurs, soumissions (ZIP, dossier ou fichiers, code collé), historique, administration (interrupteur immédiat, état du runner mesuré par le worker, file, quotas, statistiques, consommation estimée, comptes). Tâches du worker : prise atomique, étapes réelles, archive effacée après exécution, soumissions bloquées marquées « état inconnu ».
+- `platform/web/` : SvelteKit 3.4 et Svelte 5, application monopage statique, CSP stricte (empreintes, aucun style en ligne hormis celui de l’annonceur de SvelteKit, autorisé par empreinte).
+- `docker/ovh/Dockerfile.platform`, `Dockerfile.web`, `nginx.conf`, `deploy/ovh/docker-compose.platform.yml` (et surcharge locale) ; `deploy/gcp/invoker-key.sh` (clé de l’invoker sur demande explicite, rotation).
+- Vérifié : 16 tests API contre PostgreSQL et Redis réels, `svelte-check` sans erreur. Pile complète lancée localement par Compose (moteur `mock`), puis parcours de bout en bout dans Firefox : connexion, soumission de code collé, étapes jusqu’à « Terminé », rapport, historique, administration, vérification du runner, interrupteur et bandeau de maintenance. Aucun message dans la console du navigateur.
+- Défauts trouvés à cette occasion et corrigés : attribut `style` du gabarit bloqué par la CSP ; redirection en cas de 401 qui remontait le formulaire de connexion et effaçait la saisie ; droits des secrets Docker (documentés : `chown 10001`).
 
 ## 6. Vérifications restant à faire sur Google Cloud
 

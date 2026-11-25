@@ -6,6 +6,8 @@ Moulinette locale pour les projets **Libft 1.3** et **Printf 1.1** de 42.
 | --- | --- |
 | [`cli/`](cli/) | Moteur Python, lanceur, tests, scripts d’installation et d’archive, intégrations Neovim/VSCode/CLion |
 | [`web/`](web/) | Interface web locale : lancement des contrôles et rapport interactif dans le navigateur |
+| [`platform/`](platform/) | Plateforme web du VPS (API FastAPI, PostgreSQL, Redis/RQ, frontend SvelteKit) |
+| [`runners/`](runners/), [`workers/`](workers/) | Moteurs d’exécution, runner Cloud Run, worker du VPS |
 
 - Installation et utilisation de l’outil en ligne de commande : [cli/README.md](cli/README.md).
 - Interface web : [web/README.md](web/README.md).

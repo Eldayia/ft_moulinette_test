@@ -37,6 +37,11 @@ jobs:
         run: |
           python -m venv .venv && .venv/bin/pip install -r requirements.txt
           .venv/bin/python -m unittest discover -s tests -v
+      - name: Plateforme (API, PostgreSQL et Redis réels dans Docker)
+        working-directory: platform/api
+        run: |
+          python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+          .venv/bin/python -m unittest discover -s tests -v
       - name: Rendu du manifeste Cloud Run
         working-directory: deploy/gcp
         run: python -m unittest discover -s tests -v
@@ -47,6 +52,24 @@ jobs:
           python -m pip install pip-audit==2.10.1
           pip-audit -r workers/cloudrun/requirements.txt
           pip-audit -r workers/dispatcher/requirements.txt
+          pip-audit -r platform/api/requirements.txt
+
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Vérification des types et construction
+        working-directory: platform/web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm run build
+      - name: Audit des dépendances npm
+        working-directory: platform/web
+        run: npm audit --audit-level=high
 
   images:
     runs-on: ubuntu-24.04

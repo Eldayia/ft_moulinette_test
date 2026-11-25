@@ -7,6 +7,13 @@
 !workers/cloudrun/requirements.txt
 !workers/dispatcher/ftm_dispatcher/
 !workers/dispatcher/requirements.txt
+!platform/api/ftm_platform/
+!platform/api/requirements.txt
+!platform/web/
+platform/web/node_modules
+platform/web/build
+platform/web/.svelte-kit
 !docker/cloudrun/
+!docker/ovh/
 **/__pycache__
 **/*.pyc
