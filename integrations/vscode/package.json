@@ -1,0 +1,9 @@
+{
+  "name":"ft-moulinette", "displayName":"42 Libft Moulinette", "version":"0.1.0",
+  "publisher":"local", "engines":{"vscode":"^1.85.0"}, "main":"./extension.js",
+  "activationEvents":["onCommand:ftMoulinette.project","onCommand:ftMoulinette.file"],
+  "contributes":{
+    "commands":[{"command":"ftMoulinette.project","title":"Moulinette: tester le projet"},{"command":"ftMoulinette.file","title":"Moulinette: tester le fichier"}],
+    "configuration":{"title":"Moulinette","properties":{"ftMoulinette.executable":{"type":"string","default":"ft-moulinette"}}}
+  }
+}

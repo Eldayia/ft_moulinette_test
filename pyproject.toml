@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ft-moulinette"
+version = "0.3.0"
+description = "Contrôles locaux pour Libft et Printf 42"
+requires-python = ">=3.10"
+
+[project.scripts]
+ft-moulinette = "ft_moulinette.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["ft_moulinette*"]
