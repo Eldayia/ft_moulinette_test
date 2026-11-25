@@ -35,9 +35,20 @@ def _quotas():
 
 
 def execute_submission(submission_id, project, archive, options=None, target=None, tests_version=None,
-                       user_key=None, quotas=None):
-    """Point d'entrée RQ. Retourne toujours un dict au format ExecutionResult.to_dict()."""
+                       user_key=None, quotas=None, on_status=None):
+    """Point d'entrée RQ. Retourne toujours un dict au format ExecutionResult.to_dict().
+
+    on_status(étape) est appelé aux étapes réellement atteintes : « preparing » (moteur prêt),
+    « running » (exécution confiée au moteur), « analyzing » (résultat reçu, en cours de traitement).
+    """
     quotas = quotas if quotas is not None else (_quotas() if user_key else None)
+
+    def stage(name):
+        if on_status is not None:
+            try:
+                on_status(name)
+            except Exception:  # l'affichage d'une étape ne doit jamais interrompre l'exécution
+                log.exception('submission=%s étape %s non enregistrée', submission_id, name)
     try:
         if not executions_enabled():
             error = ExecutionError('infrastructure', 'disabled', 'Exécutions désactivées par l’administrateur.')
@@ -49,9 +60,12 @@ def execute_submission(submission_id, project, archive, options=None, target=Non
             error = ExecutionError('infrastructure', 'configuration', 'Moteur d’exécution mal configuré.')
             return ExecutionResult(submission_id, 'infrastructure_error', None, dict(backend='none'), error).to_dict()
         try:
+            stage('preparing')
             submission = Submission(project, archive=archive, options=Options.from_dict(options), target=target,
                                     tests_version=tests_version, submission_id=submission_id)
+            stage('running')
             result = engine.execute(submission)
+            stage('analyzing')
         except ExecutionError as exc:
             outcome = 'unsupported' if exc.category == 'user' else 'infrastructure_error'
             result = ExecutionResult(submission_id, outcome, None, dict(backend=engine.name), exc)

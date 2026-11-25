@@ -187,6 +187,21 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(quotas.usage()['in_flight'], 0)  # libérée dans tous les cas
         return result
 
+    def test_stages_are_reported_in_order(self):
+        stages = []
+        with mock.patch.dict(os.environ, {'EXECUTION_BACKEND': 'mock'}, clear=True):
+            result = tasks.execute_submission('c' * 32, 'libft', ARCHIVE, quotas=MemoryQuotas(POLICY),
+                                              on_status=stages.append)
+        self.assertEqual(result['outcome'], 'success')
+        self.assertEqual(stages, ['preparing', 'running', 'analyzing'])
+
+        def broken(stage):
+            raise RuntimeError('base indisponible')
+        tasks._backend = None
+        with mock.patch.dict(os.environ, {'EXECUTION_BACKEND': 'mock'}, clear=True):
+            self.assertEqual(tasks.execute_submission('d' * 32, 'libft', ARCHIVE, quotas=MemoryQuotas(POLICY),
+                                                      on_status=broken)['outcome'], 'success')
+
     def test_misconfiguration_is_an_infrastructure_error(self):
         result = self.run_task({})
         self.assertEqual((result['outcome'], result['error']['code']), ('infrastructure_error', 'configuration'))

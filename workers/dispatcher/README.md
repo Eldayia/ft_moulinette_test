@@ -1,6 +1,6 @@
 # Worker du VPS (Redis/RQ)
 
-Paquet `ftm_dispatcher`, utilisé par l’API publique du VPS (hors dépôt) et par le worker RQ. Il ne compile ni n’exécute rien : la tâche délègue au moteur configuré, `cloudrun` en production.
+Paquet `ftm_dispatcher`, utilisé par la plateforme du VPS (`platform/`) et par son worker RQ. Il ne compile ni n’exécute rien : la tâche délègue au moteur configuré, `cloudrun` en production.
 
 | Module | Rôle |
 | --- | --- |
@@ -8,7 +8,7 @@ Paquet `ftm_dispatcher`, utilisé par l’API publique du VPS (hors dépôt) et 
 | `enqueue.py` | `enqueue_submission()` : interrupteur, validation de l’archive, refus des doublons avant réservation, quotas, puis mise en file unique (`job_id = submission_id`, `unique=True` dans RQ 3), sans nouvelle tentative automatique |
 | `tasks.py` | `execute_submission()` : tâche RQ. Interrupteur, moteur construit depuis l’environnement (une fois par processus), résultat toujours sérialisable, quota libéré dans tous les cas |
 
-La concurrence d’exécution est le nombre de workers : `rq worker-pool --num-workers $MAX_CONCURRENT_JOBS ftm-submissions` (image `docker/ovh/Dockerfile.worker`). Déploiement : [docs/docker-deployment.md](../../docs/docker-deployment.md).
+La concurrence d’exécution est le nombre de workers : `rq worker-pool --num-workers $MAX_CONCURRENT_JOBS ftm-submissions` (service `ftm-worker` de `deploy/ovh/docker-compose.platform.yml`, qui exécute les tâches de `platform/api/ftm_platform/tasks.py` en s’appuyant sur ce paquet). Déploiement : [docs/docker-deployment.md](../../docs/docker-deployment.md).
 
 ## Tests
 
