@@ -2,9 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`AGENT.md` is the maintained, detailed agent guide (in French): module map, invariants, validation status and open work. It is imported below, so treat it as part of these instructions and keep it up to date when behaviour, layout or validation results change. `cli/README.md` is the user-facing guide for the CLI; `web/README.md` covers the web part.
+Three documents are imported below and are part of these instructions (all in French):
+
+- `docs/agent-guide.md` — the maintained guide to the existing code: module map, invariants, validation record. Keep it up to date when behaviour, layout or validation results change.
+- `AGENT.md` — the user's current mission: a remote execution backend on Google Cloud Run sandboxes (VPS on OVH, untrusted C never executed there).
+- `docs/cloudrun.md` — what has actually been verified in Google's docs, deviations from the mission, the integration plan and its progress. Update it as phases land.
+
+`cli/README.md` is the user-facing guide for the CLI; `web/README.md` covers the local web part.
+
+@docs/agent-guide.md
 
 @AGENT.md
+
+@docs/cloudrun.md
 
 ## Quick reference
 

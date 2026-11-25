@@ -9,7 +9,8 @@ Moulinette locale pour les projets **Libft 1.3** et **Printf 1.1** de 42.
 
 - Installation et utilisation de l’outil en ligne de commande : [cli/README.md](cli/README.md).
 - Interface web : [web/README.md](web/README.md).
-- Fonctionnement interne, conventions et état du dépôt : [AGENT.md](AGENT.md).
+- Fonctionnement interne, conventions et état du dépôt : [docs/agent-guide.md](docs/agent-guide.md).
+- Exécution distante sur Google Cloud Run (en cours) : mission dans [AGENT.md](AGENT.md), état et plan dans [docs/cloudrun.md](docs/cloudrun.md).
 
 Démarrage rapide :
 

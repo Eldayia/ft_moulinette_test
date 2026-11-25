@@ -388,7 +388,7 @@ Pour pip, utilise le Python de l’environnement concerné :
 
 ## Développement
 
-La carte des modules, les règles de modification et l’état d’avancement figurent dans [AGENT.md](../AGENT.md), à la racine du dépôt. Ce dossier `cli/` contient l’outil en ligne de commande et ses intégrations ; la partie web est développée dans [`web/`](../web/).
+La carte des modules, les règles de modification et l’état d’avancement figurent dans [docs/agent-guide.md](../docs/agent-guide.md). Ce dossier `cli/` contient l’outil en ligne de commande et ses intégrations ; la partie web est développée dans [`web/`](../web/).
 
 Depuis le dossier `cli/` :
 
@@ -398,6 +398,6 @@ node --check integrations/vscode/extension.js
 sh -n install.sh package.sh
 ```
 
-La suite utilise `unittest`, compile des programmes C temporaires et couvre notamment les 43 fonctions Libft, les douze groupes Printf, les implémentations de référence, les mutations incorrectes, les diagnostics, le JSON, les archives et les reconstructions Makefile. Les tests mémoire concernés sont ignorés si Valgrind est absent. S’il est présent mais ne démarre pas, certains tests sont ignorés et le test mémoire Printf peut échouer ; le dernier résultat local est détaillé dans `AGENT.md` à la racine du dépôt. Node.js n’est nécessaire ici que pour vérifier la syntaxe de l’extension VSCode.
+La suite utilise `unittest`, compile des programmes C temporaires et couvre notamment les 43 fonctions Libft, les douze groupes Printf, les implémentations de référence, les mutations incorrectes, les diagnostics, le JSON, les archives et les reconstructions Makefile. Les tests mémoire concernés sont ignorés si Valgrind est absent. S’il est présent mais ne démarre pas, certains tests sont ignorés et le test mémoire Printf peut échouer ; le dernier résultat local est détaillé dans `docs/agent-guide.md`. Node.js n’est nécessaire ici que pour vérifier la syntaxe de l’extension VSCode.
 
 Les archives générées, environnements virtuels, caches et journaux sont des artefacts locaux ignorés par Git. Leur présence ne garantit pas qu’ils correspondent aux dernières sources.

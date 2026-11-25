@@ -1,252 +1,1170 @@
-# Guide des agents de code — ft-moulinette
 
-Ce document décrit le fonctionnement, les conventions et l’état du dépôt pour permettre à un autre agent de reprendre le travail. Il doit être lu avec [cli/README.md](cli/README.md) et [web/README.md](web/README.md), qui restent les guides d’installation et d’utilisation de la CLI et de l’interface web.
+# Mission : Intégrer Google Cloud Run Sandboxes à ft-moulinette
 
-**État relevé le 25 novembre 2026.** Les constats ci-dessous proviennent du code et des vérifications locales ; les pistes de travail ne sont pas des fonctionnalités déjà livrées.
+## 1. Contexte
 
-Le nom `AGENT.md` est volontaire. Il ne faut pas supposer que les outils qui découvrent automatiquement `AGENTS.md` chargeront ce fichier : le référencer explicitement dans leur contexte si nécessaire.
+Tu travailles dans le dépôt existant `ft-moulinette`.
 
-## 1. Mission et périmètre
+Ce projet est destiné à devenir une plateforme communautaire de prévalidation des projets C de l'École 42.
 
-Le projet fournit un outil local de contrôle pour les sujets 42 **Libft 1.3** et **Printf 1.1**. Le paquet Python est en version **0.3.0**, nécessite Python **3.10+** et n’a pas de dépendance tierce à l’exécution.
+Il doit être accessible depuis :
 
-L’outil doit aider à comprendre les erreurs grâce à des diagnostics en français, des emplacements exploitables par les éditeurs et des tests reproductibles. Il ne doit pas présenter une réussite automatique comme une certification officielle.
+- Le CLI historique.
+- Un plugin Neovim.
+- Une extension Visual Studio Code.
+- Un plugin JetBrains CLion.
+- Une interface web.
+- Une API REST.
+- Des intégrations CI/CD.
 
-Le fonctionnement vise Linux, avec des outils compatibles GNU. La norme 4.1 est la référence documentaire ; le contrôle réel utilise la version de Norminette accessible dans l’environnement.
+L'objectif de cette mission est de développer un backend d'exécution distant basé sur Google Cloud Run Sandboxes afin de ne jamais exécuter du code C utilisateur non fiable sur le VPS principal.
 
-## 2. Consignes pour intervenir
+Cette mission complète la spécification globale de ft-moulinette.
 
-1. Lire les fichiers concernés et leurs tests avant de modifier le comportement. Vérifier les instructions locales applicables et l’état des changements existants lorsque les métadonnées Git sont disponibles.
-2. Garder les modifications dans le périmètre demandé. Préserver les modifications de l’utilisateur ; ne pas régénérer les archives ou plugins sans raison liée à la tâche.
-3. Utiliser la bibliothèque standard Python tant qu’une nouvelle dépendance n’est pas justifiée. Conserver Python 3.10 comme version minimale.
-4. Respecter les contrats du sujet encodé ici. Ne pas remplacer les attentes par celles d’un ancien sujet Libft ou de la libc sans vérifier les différences.
-5. Pour une correction fonctionnelle, ajouter ou adapter un test qui démontre le comportement attendu et rejette une implémentation incorrecte. Éviter les tests qui recopient uniquement l’implémentation.
-6. Passer les commandes externes sous forme de listes d’arguments. Conserver les délais, la gestion des crashes et la terminaison des processus ; ne pas introduire d’interpolation de shell pour les chemins fournis par l’utilisateur.
-7. Préserver les chemins originaux dans les diagnostics. Les fichiers temporaires des bancs ne doivent pas être présentés comme des erreurs du projet étudiant.
-8. Ne pas traiter un contrôle désactivé ou indisponible comme une réussite. Préserver la distinction entre `skip`, `unavailable`, `blocked` et `fail`.
-9. Documenter les nouveaux comportements publics dans le README concerné (`cli/README.md` ou `web/README.md`) et mettre à jour ici les limites ou résultats de validation qui changent.
-10. En fin de tâche, indiquer les fichiers modifiés, les vérifications effectuées, leurs résultats et les limites restantes. Ne pas annoncer une suite entièrement verte si des tests échouent ou sont ignorés.
+Ne supprime aucune fonctionnalité existante et ne remplace pas les modes d'exécution locaux.
 
-Les projets C et leurs Makefiles exécutent du code avec les droits de l’utilisateur. Les copies temporaires préservent les liens symboliques : ce mécanisme n’est pas un confinement. Utiliser des fixtures temporaires et de confiance pour les tests de développement.
+## 2. Infrastructure cible
 
-## 3. Carte du dépôt
+### VPS principal OVH
 
-Le dépôt est organisé en deux parties :
+- Debian 12.
+- 6 vCPU.
+- 12 Go de RAM.
+- Docker Compose.
+- Nginx Proxy Manager.
+- Réseau Docker externe `proxy`.
 
-- `cli/` : l’outil existant (moteur Python, lanceur, tests, scripts d’installation et d’archive, intégrations éditeur). Toutes ses commandes se lancent **depuis `cli/`** ; ses scripts résolvent leurs chemins par rapport à leur propre emplacement et l’archive de `package.sh` reproduit le contenu de `cli/` à sa racine.
-- `web/` : l’interface web locale, paquet Python `ft_moulinette_web` 0.1.0 (voir section 6). Ses commandes se lancent depuis `web/`.
+Le VPS héberge :
 
-À la racine : `README.md` (présentation et renvois), ce guide, `CLAUDE.md` et `.gitignore` commun.
+- Frontend SvelteKit.
+- Backend FastAPI.
+- PostgreSQL.
+- Redis.
+- File d'attente RQ.
+- Authentification.
+- Gestion des soumissions.
+- Historique.
+- Worker d'orchestration.
+- Rapports de tests.
 
-Les chemins du tableau suivant sont relatifs à `cli/`.
+Le VPS principal ne doit jamais compiler ou exécuter les soumissions web non fiables.
 
-| Chemin | Responsabilité |
-| --- | --- |
-| `pyproject.toml` | Métadonnées, version Python, backend setuptools et commande `ft-moulinette` |
-| `bin/ft-moulinette` | Lanceur utilisable depuis le dépôt, indépendamment du dossier courant |
-| `ft_moulinette/__main__.py` | Arguments CLI, sélection du moteur, JSON et code de sortie |
-| `ft_moulinette/engine.py` | Détection du sujet, exécution bornée des processus et orchestration Libft |
-| `ft_moulinette/cases.py` | Liste des 43 fonctions, prélude C, assertions et injection malloc Libft |
-| `ft_moulinette/prototypes.py` | Signatures publiques Libft attendues |
-| `ft_moulinette/runner.py` | Construction/exécution d’un banc Libft, Valgrind et pannes malloc |
-| `ft_moulinette/printf.py` | Racine Printf, découverte récursive, compilation et orchestration des groupes |
-| `ft_moulinette/printf_cases.py` | Douze groupes et banc C de comparaison avec `snprintf` |
-| `ft_moulinette/build.py` | Règles Makefile, état des fichiers et reconstructions après modification |
-| `ft_moulinette/audit.py` | Interception via PATH des outils de compilation et d’archivage |
-| `ft_moulinette/diagnostics.py` | Extraction des lignes/colonnes et remappage des chemins temporaires |
-| `ft_moulinette/explain.py` | Reformulation pédagogique des échecs Libft |
-| `ft_moulinette/report.py` | Rapport texte compact et mode détaillé |
-| `install.sh` | Installation locale et bloc d’alias Bash/Zsh |
-| `package.sh` | Archive de distribution dans `dist/` |
-| `integrations/neovim/` | Module Lua, commandes projet/fichier et quickfix |
-| `integrations/vscode/` | Extension JavaScript, diagnostics, Output et empaquetage VSIX local |
-| `integrations/clion/` | Plugin Java, build local avec SDK installé, alternative Gradle et guide dédié |
-| `tests/` | Tests unittest, références C, mutations et fixtures temporaires |
+### Google Cloud
 
-Les dossiers `dist/`, `build/`, `.venv/`, `node_modules/`, les caches Python, les VSIX et les journaux sont ignorés par Git. Un binaire ou une archive présent localement peut être antérieur aux sources.
+Google Cloud héberge exclusivement :
 
-## 4. Parcours d’exécution et invariants
+- Une API privée d'exécution.
+- Un orchestrateur de sandbox.
+- Les environnements isolés.
+- Les outils de compilation et d'analyse C.
 
-### Entrée et résultats
+Configuration initiale :
 
-`main()` analyse les arguments et appelle `engine.run()`. `detect_project()` respecte `--project`, sinon recherche des marqueurs Printf ; Libft sert de choix par défaut.
+- Région : europe-west1.
+- Cloud Run Services.
+- Environnement d'exécution Gen 2.
+- Cloud Run Sandboxes.
+- Artifact Registry.
+- IAM.
+- Facturation par requête.
+- Minimum 0 instance.
+- Maximum 2 instances.
+- Concurrence de 1 par instance.
+- 1 vCPU.
+- 2 Gio de RAM.
+- Timeout HTTP de 120 secondes.
 
-Les valeurs publiques par défaut sont : cible `.`, projet `auto`, 500 itérations, graine 42 et timeout 15 secondes. Les itérations et le timeout doivent être strictement positifs. Les graines sont normalisées sur 32 bits dans les bancs. Le timeout s’applique à chaque commande, pas au contrôle global ; les bancs exécutés sous Valgrind disposent d’au moins 30 secondes.
+Ces valeurs doivent être configurables.
 
-Chaque résultat possède `file`, `line`, `column`, `check`, `status`, `message`. `diagnostics` et `raw_message` sont optionnels. Le JSON expose `schema_version=1`, `module`, `summary`, `results`.
+## 3. Documentation officielle
 
-- `module` vaut `libft-1.3` ou `printf-1.1`.
-- `summary` ne contient que les statuts présents.
-- Les chemins des résultats et diagnostics doivent désigner les fichiers originaux.
-- Le préfixe `archive:` identifie les tests contre l’archive produite par le Makefile.
-- Les intégrations VSCode et Neovim, ainsi que l’interface web, consomment ce JSON ; ne pas en changer la structure sans examiner ces consommateurs et les tests.
-- `--progress` écrit sur stderr une ligne `{"event": "result", "result": <résultat>}` par résultat, au moment de sa création, via le paramètre `progress` de `engine.run()` et de `run_printf()`. Le flux doit rester identique, dans l’ordre, à `results` ; stdout ne change pas. Tout nouveau point de création de résultat doit passer par les fonctions `add` existantes pour conserver cette propriété.
-- Sortie 1 si un résultat vaut `fail`, `missing`, `blocked` ou `unavailable` ; 0 sinon ; les erreurs d’arguments et certaines erreurs d’accès sont remontées par argparse avec le code 2.
+Avant d'implémenter cette intégration, consulter les documentations officielles actuelles :
 
-L’option masquée `--reviewed readme|project|all` et les statuts `manual`/`reviewed` subsistent pour compatibilité. Le moteur courant ne génère pas de rappels de relecture systématiques. Ne pas présenter cette option comme une validation de conformité ni comme une déclaration persistante.
+- https://docs.cloud.google.com/run/docs/code-execution
+- https://docs.cloud.google.com/run/docs/configuring/services/sandboxes
+- https://docs.cloud.google.com/run/docs/reference/sandbox-cli
+- https://docs.cloud.google.com/run/docs/configuring/jobs/sandboxes
+- https://docs.cloud.google.com/run/docs/authenticating/service-to-service
+- https://docs.cloud.google.com/iam/docs/tutorial-cloud-run-workload-id-federation
+- https://cloud.google.com/run/pricing
 
-### Libft
+Cloud Run Sandboxes est actuellement une fonctionnalité Preview.
 
-Les sources sont découvertes à la racine, avec la convention `ft_<fonction>.c`. Toutes les sources racine disponibles sont compilées pour fournir les dépendances, puis chaque fonction sélectionnée est testée séparément.
+Ne pas inventer des options CLI, des paramètres YAML, des SDK ou des fonctionnalités qui n'existent pas.
 
-En mode fichier, seuls les contrôles de la source sélectionnée sont rapportés pour la compilation et les symboles ; les dépendances restent compilées. En mode header, aucun banc fonctionnel de fonction n’est sélectionné. Les contrôles de projet et de Makefile nécessitent une cible dossier.
+Vérifier la disponibilité régionale, les restrictions et les limitations actuelles.
 
-Invariants du sujet encodé :
+Documenter toute limitation empêchant un déploiement sécurisé.
 
-- 43 fonctions obligatoires, listes incluses ; pas de traitement des listes comme bonus facultatifs.
-- `ft_lstsize` retourne `unsigned int`.
-- Les classifications `isalpha`, `isdigit`, `isalnum`, `isascii`, `isprint` retournent exactement 0 ou 1 ; les oracles doivent normaliser la libc lorsque nécessaire.
-- `FUNCTIONS`, `CASES` et `PROTOTYPES` doivent rester cohérents.
-- Les auxiliaires définis dans les fichiers des fonctions contrôlées sont attendus `static` ; les variables globales, y compris `static`, sont rejetées par l’analyse des symboles.
-- Les échecs malloc utilisent `-Wl,--wrap=malloc`. `--no-memory` désactive Valgrind, mais conserve ces scénarios d’allocation.
+## 4. Analyse du dépôt
 
-Les objets compilés indépendamment et la véritable `libft.a` font l’objet de parcours de tests distincts. Ne pas substituer les objets individuels à l’archive pour masquer un Makefile défectueux.
+Avant toute modification :
+
+1. Analyser le moteur CLI existant.
+2. Identifier les fonctionnalités déjà disponibles.
+3. Identifier les interfaces d'exécution.
+4. Identifier le format des rapports.
+5. Identifier les dépendances.
+6. Identifier le système de tests.
+7. Identifier la stack web existante si elle a déjà été développée.
+8. Identifier les risques de sécurité.
+9. Rédiger un plan d'intégration.
+10. Ajouter les tests de non-régression nécessaires.
+
+Réutiliser au maximum le code existant.
+
+Ne pas dupliquer les tests entre le CLI et le moteur distant.
+
+Adapter l'architecture proposée au dépôt réel.
+
+## 5. Abstraction des moteurs d'exécution
+
+Créer ou étendre une interface commune `ExecutionBackend`.
+
+Elle doit permettre :
+
+- De soumettre une tâche.
+- De sélectionner un projet.
+- De sélectionner les tests.
+- De transmettre des fichiers.
+- De gérer les délais.
+- De récupérer les résultats.
+- De distinguer les erreurs utilisateur des erreurs infrastructure.
+- D'annuler une tâche lorsque le backend le permet.
+- De vérifier la disponibilité du backend.
+
+Implémentations envisagées :
+
+- `LocalRunner`
+- `DockerRunner`
+- `CloudRunRunner`
+- `MockRunner`
+
+Prévoir la possibilité d'ajouter ultérieurement :
+
+- `CloudRunJobRunner`
+- `RemoteVMRunner`
+- `FirecrackerRunner`
+- D'autres fournisseurs de sandbox.
 
-### Printf
+Le mode CLI local doit rester autonome.
 
-`project_root()` remonte au Makefile parent le plus proche pour une cible fichier. Toutes les sources C non cachées de l’arborescence sont prises en compte ; les dossiers de headers sont ajoutés aux chemins d’inclusion.
+Le mode Docker de développement ne doit pas être considéré comme une isolation suffisante pour des utilisateurs publics.
 
-Même en mode fichier, le module teste l’ensemble de `ft_printf` ; seule la portée de Norminette est réduite à la cible. Les contrôles de présence, README et Makefile nécessitent une cible dossier.
+Le backend Cloud Run doit être sélectionnable par configuration.
 
-La sortie est binaire : préserver les NUL de `%c` et la comparaison du nombre d’octets retourné. Les douze groupes s’exécutent séparément : une erreur doit arrêter son groupe, tout en laissant les autres s’exécuter. Les appels internes définis dans le projet sont admis ; ne pas transposer l’interdiction des auxiliaires non `static` de Libft à Printf.
+Ne jamais basculer automatiquement vers LocalRunner si Cloud Run est indisponible.
 
-Les formats invalides, bonus, flags/largeurs/précisions, format NULL, `%s` NULL, erreurs d’écriture et pannes malloc restent hors du périmètre courant.
+En production web, toute absence de sandbox sécurisée doit empêcher l'exécution.
+
+## 6. Organisation du dépôt
+
+Structure indicative :
+
+    ft-moulinette/
+    ├── core/
+    │   ├── engine/
+    │   ├── projects/
+    │   ├── reporters/
+    │   └── runners/
+    │       ├── base.py
+    │       ├── local.py
+    │       ├── docker.py
+    │       └── cloudrun.py
+    ├── api/
+    ├── workers/
+    │   ├── dispatcher/
+    │   └── cloudrun/
+    │       ├── app.py
+    │       ├── schemas.py
+    │       ├── sandbox.py
+    │       ├── limits.py
+    │       ├── workspace.py
+    │       └── reporting.py
+    ├── web/
+    ├── integrations/
+    ├── docker/
+    │   └── cloudrun/
+    │       ├── Dockerfile.runner
+    │       ├── Dockerfile.sandbox
+    │       └── requirements.txt
+    ├── deploy/
+    │   └── gcp/
+    │       ├── service.yaml.template
+    │       ├── bootstrap.sh
+    │       ├── build.sh
+    │       ├── deploy.sh
+    │       ├── smoke-test.sh
+    │       └── README.md
+    ├── tests/
+    │   ├── unit/
+    │   ├── integration/
+    │   └── security/
+    └── docs/
+        ├── cloudrun.md
+        ├── cloudrun-security.md
+        └── cloudrun-costs.md
 
-### Processus et Makefile
+Cette organisation est indicative.
 
-`engine.execute()` utilise une session de processus dédiée, tue le groupe après timeout et borne la lecture des journaux à 65 536 octets. Les crashes et timeouts doivent produire des diagnostics compréhensibles.
+Respecter les conventions et la structure existantes.
 
-`check_build()` contrôle les règles et leurs effets réels sur les objets et l’archive. `check_rebuilds()` modifie les dates des sources/headers de la copie pour demander une reconstruction. L’absence de relink se mesure aussi par les dates des objets et archives.
+## 7. Images Docker Google Cloud
 
-`audit_build()` intercepte `cc`, `gcc`, `clang`, `ar`, `libtool` via des lanceurs dans le PATH. Il exige `cc` et les trois flags, observe l’utilisation de `ar`, rejette `libtool` et, pour Libft, `-std=c99`. Les commandes par chemins absolus peuvent échapper à l’observation : conserver le signalement `unavailable`.
+Créer deux images distinctes.
 
-## 5. Installation, intégrations et livraison
+### Image runner-api
 
-`install.sh` vérifie Python et `cc`, `make`, `ar`, `nm`. Il installe `cli/ft_moulinette/` et `cli/bin/` dans `~/.local/share/ft-moulinette`, ainsi que `cli/README.md`, le script d’installation et `pyproject.toml`. Le lanceur externe utilise le Python ayant exécuté l’installation.
+Fichier :
 
-Préserver le comportement sans réseau, la gestion des chemins contenant espaces/apostrophes, le respect de `$ZDOTDIR`, la conservation des configurations shell existantes et l’idempotence du bloc d’alias. L’installateur ne copie ni les tests ni les intégrations.
+`docker/cloudrun/Dockerfile.runner`
 
-`package.sh` crée `cli/dist/ft-moulinette.tar.gz` avec les intégrations, mais sans les tests, ce guide, ni la partie web. Il peut inclure les builds d’intégrations déjà présents : inspecter leur fraîcheur avant une livraison. Ne pas supposer qu’une archive existante est à jour.
+Contient uniquement les composants de confiance :
 
-Commandes de fabrication, depuis `cli/` et uniquement si la tâche le nécessite :
+- Python.
+- FastAPI.
+- Serveur HTTP.
+- Orchestrateur de sandbox.
+- Validation des requêtes.
+- Gestion des fichiers temporaires.
+- Génération et validation des rapports.
+- Gestion des erreurs.
+- Gestion des limites.
 
-```sh
-sh package.sh
-python3 integrations/vscode/package_local.py
-python3 integrations/clion/build_local.py --clion /opt/clion
-```
+Le service doit écouter sur :
 
-Les versions des composants ne sont actuellement pas alignées : paquet Python 0.3.0, extension VSCode 0.1.0, version Gradle CLion 0.2.0, ZIP CLion local 0.3.0. Le build CLion local utilise le SDK installé ; Gradle référence CLion 2025.3 et Java 21. Ne pas annoncer une version unique des intégrations sans mettre à jour les métadonnées concernées.
+`0.0.0.0:$PORT`
 
-## 6. Partie web
+Le port par défaut est 8080.
 
-`web/` contient un serveur HTTP en bibliothèque standard (`http.server`) et une page HTML/CSS/JS sans framework ni build. Guide utilisateur et API : [web/README.md](web/README.md).
+Cette image ne doit jamais exécuter directement du code C soumis.
 
-| Chemin (relatif à `web/`) | Responsabilité |
-| --- | --- |
-| `bin/ft-moulinette-web` | Lanceur, indépendant du dossier courant |
-| `ft_moulinette_web/__main__.py` | Options, refus d’une écoute hors boucle locale sans `--allow-remote`, choix du moteur |
-| `ft_moulinette_web/server.py` | Routes `/`, `/static/*`, `/api/runs[/<id>]`, contrôles `Host`/`Origin`/`Sec-Fetch-Site`, CSP |
-| `ft_moulinette_web/jobs.py` | Validation des demandes, file à un seul exécutant, sous-processus CLI `--json --progress`, lecture de l’avancement, annulation, annotation |
-| `ft_moulinette_web/static/` | `index.html`, `app.js`, `style.css` |
-| `tests/` | Tests unittest du serveur, avec le vrai moteur et des moteurs factices |
+Ne pas installer inutilement GCC, Make ou les outils de compilation dans le conteneur parent.
 
-Invariants :
+### Image sandbox-c
 
-- Le serveur **ne réimplémente aucun contrôle** : il exécute la CLI (`--engine`, sinon `../cli/bin/ft-moulinette`, sinon `ft-moulinette` du PATH) avec `--json`. Il ajoute `--progress` seulement si `--help` du moteur le mentionne, ce qui garde compatible un moteur installé plus ancien. Les lignes d’événements de stderr alimentent `progress` (nombre et statuts reçus) et `partial` (problèmes déjà détectés) ; les autres lignes servent au message d’erreur. Les codes 0 et 1 accompagnés d’un rapport valide donnent l’état `done` ; tout autre cas donne `error`, avec le message argparse ou la fin de stderr.
-- Le rapport conserve le schéma de la CLI. Seuls `label` (via `ft_moulinette.report.check_label`, si `cli/` est importable) et `relative` sont ajoutés à chaque résultat. Les changements de schéma CLI doivent donc aussi être examinés côté `app.js`.
-- La validation serveur reprend les contraintes de la CLI : chemin absolu existant, dossier ou `.c`/`.h`, projet connu, entiers strictement positifs pour itérations et délai.
-- Protections à préserver : écoute locale par défaut, liste fermée de `Host`, refus des mutations d’une autre origine, JSON obligatoire et borné, liste fermée de fichiers statiques, construction du DOM par `textContent` (jamais `innerHTML` avec des données du rapport).
-- Annulation : SIGINT au groupe de processus du moteur (nettoyage des dossiers temporaires), puis SIGKILL après 5 secondes.
-- Arrêt du serveur : SIGINT et SIGTERM sont gérés explicitement (un SIGINT hérité ignoré d’un shell non interactif ne doit pas empêcher l’arrêt). L’exécution en cours est annulée et l’historique enregistré.
-- Historique : `--history`, par défaut `$XDG_STATE_HOME/ft-moulinette-web/history.json`, ou `--no-history`. Seules les exécutions terminées sont enregistrées (format `version: 1`), de façon atomique, avec les droits `600` dans un dossier `700`. Au chargement, toute entrée est revalidée et les invalides sont ignorées. Un fichier illisible est renommé en `.corrompu`, jamais écrasé. Les tests n’utilisent jamais l’emplacement par défaut. `DELETE /api/runs/<id>` annule ; `DELETE /api/history/<id>` supprime une exécution terminée.
-- `install.sh` et `package.sh` n’incluent pas `web/`.
+Fichier :
 
-## 7. Validation
+`docker/cloudrun/Dockerfile.sandbox`
 
-Depuis le dossier `cli/` :
+Contient :
 
-```sh
-python3 -m unittest discover -s tests -v
-node --check integrations/vscode/extension.js
-sh -n install.sh package.sh
-```
+- Distribution Linux minimale compatible.
+- GCC.
+- Clang.
+- Make.
+- Binutils.
+- Norminette.
+- Valgrind.
+- Python et dépendances nécessaires au moteur de tests.
+- AddressSanitizer si disponible.
+- UndefinedBehaviorSanitizer si disponible.
+- Outils nécessaires aux tests existants.
+- Définitions de tests approuvées et versionnées.
 
-Depuis le dossier `web/` :
+Utiliser des versions explicites et reproductibles.
 
-```sh
-python3 -m unittest discover -s tests -v
-node --check ft_moulinette_web/static/app.js
-```
+Préinstaller les dépendances lors de la construction de l'image.
 
-Pour isoler un domaine, la découverte conserve le dossier des tests dans les imports :
+Ne pas télécharger de dépendances pendant une soumission.
 
-```sh
-python3 -m unittest discover -s tests -p 'test_printf.py' -v
-python3 -m unittest discover -s tests -p 'test_regressions.py' -v
-python3 -m unittest discover -s tests -p 'test_install.py' -v
-```
+Ne jamais inclure de secrets ou de credentials dans cette image.
 
-| Tests | Ce qu’ils vérifient |
-| --- | --- |
-| `test_engine.py`, `test_harnesses.py` | Couverture des fonctions, compilation des bancs, erreurs, crashes et timeouts |
-| `test_oracles.py`, `references.py` | Références, messages d’échec et rejet de mutations incorrectes |
-| `test_full_project.py` | 43 fonctions, prototypes, véritable archive et 44 reconstructions source/header |
-| `test_build_audit.py`, `test_regressions.py` | Flags manquants, archive vide, nettoyage sans effet, globales static, mémoire et nettoyage de lstmap |
-| `test_printf.py` | Douze groupes, sources imbriquées, JSON, archive, NUL, retours, mutations, crashes/timeouts et fuite |
-| `test_diagnostics.py`, `test_failure_messages.py`, `test_report.py` | Emplacements, messages utiles, présentation et distinction des problèmes |
-| `test_install.py` | Installation/mise à jour, alias, chemins complexes et autonomie après suppression des sources |
-| `test_reviewed.py` | Compatibilité de l’option masquée, sans effacement des erreurs ni persistance |
-| `test_progress.py` | Flux `progress` identique aux résultats (Libft, Printf) ; `--progress` sur stderr sans changer le JSON |
-| `web/tests/test_server.py`, `web/tests/test_main.py`, `web/tests/test_history.py` | Protections HTTP, validation, exécution réelle Libft (succès/échec), avancement partiel, moteur sans `--progress`, annulation, erreurs du moteur, choix du moteur, refus d’écoute réseau, arrêt par SIGTERM/SIGINT, historique (rechargement, suppression, droits, entrées invalides, fichier corrompu ou non inscriptible) |
+## 8. Sandbox templates
 
-Les tests d’installation utilisent des dossiers personnels temporaires. Ne pas lancer `install.sh` sur la configuration réelle de l’utilisateur pour valider une modification de documentation.
+Utiliser de préférence les sandbox templates Cloud Run pour séparer l'environnement de compilation du conteneur parent.
 
-### Dernière validation observée : 25 novembre 2026, après le passage à `cli/` + `web/`
+Configurer un template nommé :
 
-Commandes lancées depuis `cli/` :
+`c-execution`
 
-- `python3 -m unittest discover -s tests` : **46 tests exécutés, 46 réussis, aucun ignoré**, en environ 59 secondes (dont `test_progress.py`). Valgrind 3.25.1 démarre désormais (`valgrind --quiet /bin/true` renvoie 0) : les tests mémoire Libft et Printf ont donc réellement été exécutés.
-- `node --check integrations/vscode/extension.js` : réussi.
-- `sh -n install.sh package.sh` : réussi.
-- `bin/ft-moulinette --help` lancé depuis un autre dossier : réussi.
-- `sh package.sh` sur une copie temporaire : l’archive contient `bin`, `ft_moulinette`, `install.sh`, `integrations`, `package.sh`, `pyproject.toml`, `README.md` à sa racine.
-- Chargement et interactions graphiques Neovim/VSCode/CLion : non vérifiés. Plugins et archive de distribution du dépôt non reconstruits.
+Le template doit utiliser l'image `sandbox-c`.
 
-Interface web, depuis `web/` :
+Activer explicitement `sandboxLauncher` sur le conteneur Cloud Run parent.
 
-- `python3 -m unittest discover -s tests -v` : **33 tests exécutés, 33 réussis**, en environ 11 secondes.
-- `node --check ft_moulinette_web/static/app.js` : réussi.
-- Firefox headless piloté par WebDriver BiDi, sur une libft de 42 fonctions avec erreurs volontaires (`ft_strlen` faux, `ft_toupper` absent) : rapport affiché, filtres, recherche, détails, lancement depuis le formulaire, état en cours, annulation et refus d’un chemin introuvable vérifiés. Exécution complète en 55 secondes. Aucun dossier temporaire ni processus du moteur restant après l’annulation.
-- `pip install -e ../cli -e .` dans un environnement virtuel temporaire : commande `ft-moulinette-web` et fichiers statiques disponibles.
-- Avancement en direct vérifié dans Firefox : nombre de contrôles, statuts et problèmes déjà détectés pendant l’exécution, puis rapport complet.
-- Thème sombre (préférence `ui.systemUsesDarkTheme`) et largeur de 400 px vérifiés : ordre formulaire → rapport → historique, défilement vers le rapport après envoi.
-- Historique de bout en bout : exécution réelle, arrêt par SIGINT, fichier `600`/`700` au format attendu, rechargement et rapport affiché après redémarrage, suppression depuis la page, absence persistante après un nouveau redémarrage.
-- Non vérifiés : navigateurs autres que Firefox.
+Utiliser le binaire fourni par Google :
 
-Un bilan précédent, dans un environnement où Valgrind ne démarrait pas (redirection `memcmp` introuvable dans `ld-linux-x86-64.so.2`), donnait 1 échec (`test_printf.PrintfTests.test_memory_reference_and_leak`) et 2 tests ignorés. Le test mémoire Printf ne vérifie toujours que la présence de l’exécutable Valgrind, et non son démarrage, avant de s’exécuter. Lors d’une nouvelle intervention, relancer les vérifications nécessaires et remplacer ce bilan si de nouvelles preuves sont disponibles.
+`/usr/local/gcp/bin/sandbox`
 
-## 8. Avancement et prochaines étapes possibles
+Le fonctionnement attendu repose sur la CLI officielle, notamment :
 
-| Domaine | État du code | Limite ou travail restant |
-| --- | --- | --- |
-| CLI, texte et JSON | Implémentés | Maintenir les contrats consommés par les éditeurs |
-| Libft 43 fonctions | Bancs, prototypes, allocations et archive implémentés | La suite finie ne couvre pas tous les programmes possibles |
-| Printf 12 groupes | Tests binaires, libc, archive et isolation implémentés | Hors périmètre détaillé plus haut |
-| Makefile | Règles, effets, flags, relink et reconstructions implémentés | Audit PATH contournable par chemins absolus ou outils différents |
-| Installation locale | Script et test d’installation présents ; test passé | Bash/Zsh pour les alias ; intégrations conservées séparément |
-| Éditeurs | Intégrations et scripts de build présents | Validation graphique à effectuer dans chaque éditeur |
-| Documentation | README et présent guide rédigés | Actualiser au fil des changements réels |
-| Web | Interface locale, API JSON, file, avancement en direct, annulation, historique persistant et tests en place | Pas d’envoi de fichiers ni de confinement pour un usage réseau |
+- `sandbox do`
+- `sandbox run`
+- `sandbox exec`
 
-Pistes de travail, à entreprendre seulement si elles correspondent à une demande :
+Vérifier la syntaxe exacte des commandes avant utilisation.
 
-1. Vérifier plus finement les contrôles de fuite et de dépassement mémoire, maintenant que la suite passe avec un Valgrind fonctionnel.
-2. Harmoniser la condition de disponibilité du test mémoire Printf avec les tests de régression, tout en conservant un vrai test des douze groupes lorsque Valgrind fonctionne.
-3. Effectuer une réception graphique des trois intégrations : projet incomplet, fichier seul, erreur de compilation, correction et relance.
-4. Clarifier et harmoniser les versions et la génération des livrables avant une nouvelle distribution.
-5. Étendre les bancs à partir de régressions démontrées ou de nouvelles versions de sujet, avec des attentes explicites et des tests de référence.
+Une sandbox neuve doit être créée pour chaque soumission.
 
-6. Web : mode multi-utilisateur, seulement avec un confinement réel de l’exécution.
+Privilégier une exécution éphémère de type `sandbox do` lorsque compatible avec le moteur.
 
-Ne pas déclarer ces étapes terminées sans preuve. Ne pas élargir implicitement le périmètre à d’autres projets 42 ou à une plateforme supplémentaire.
+Utiliser une sandbox persistante uniquement pendant la durée d'une soumission si plusieurs étapes nécessitent le même environnement.
+
+Détruire systématiquement cette sandbox à la fin.
+
+Ne jamais réutiliser une sandbox entre utilisateurs.
+
+## 9. Sécurité de la sandbox
+
+Cette section est critique.
+
+Les fichiers suivants sont potentiellement hostiles :
+
+- Sources C.
+- Headers.
+- Makefiles.
+- Archives ZIP.
+- Contenu collé dans l'éditeur.
+- Dépôts Git importés.
+
+Toutes les opérations susceptibles d'exécuter ou d'interpréter ce contenu doivent être réalisées dans un environnement isolé.
+
+Cela inclut :
+
+- Compilation.
+- Préprocesseur C.
+- Make.
+- Exécution des binaires.
+- Scripts soumis.
+- Tests.
+- Norminette.
+- Analyse mémoire.
+
+### Réseau
+
+Interdire le réseau sortant depuis la sandbox.
+
+Ne jamais utiliser `--allow-egress`.
+
+Le code utilisateur ne doit pas pouvoir accéder :
+
+- À Internet.
+- Au VPS OVH.
+- À PostgreSQL.
+- À Redis.
+- Aux API internes.
+- Au serveur de métadonnées Google Cloud.
+- Aux credentials du compte de service.
+
+### Système de fichiers
+
+Ne jamais monter le système de fichiers complet du conteneur parent.
+
+Ne jamais monter :
+
+- Des secrets.
+- Des fichiers d'authentification.
+- Des clés de service.
+- Des fichiers de configuration sensibles.
+- Le socket Docker.
+- Les dossiers d'autres soumissions.
+
+Utiliser des répertoires temporaires isolés.
+
+Pour les templates, privilégier des volumes mémoire avec sous-répertoires uniques par soumission.
+
+Vérifier que les mécanismes d'échange de fichiers sont compatibles avec les restrictions actuelles de Cloud Run Sandboxes.
+
+Utiliser des montages en lecture seule lorsque possible.
+
+Ne jamais faire confiance aux fichiers produits par la sandbox.
+
+### Ressources
+
+Appliquer des limites configurables sur :
+
+- Le temps de compilation.
+- Le temps d'exécution individuel.
+- Le temps total de soumission.
+- La mémoire.
+- Les processus.
+- Le nombre de fichiers.
+- La taille des fichiers.
+- La taille des sorties.
+- L'espace de stockage temporaire.
+- Le nombre de soumissions concurrentes.
+
+Cloud Run limite les ressources au niveau de l'instance.
+
+Les sandbox templates partagent les ressources CPU et RAM de l'instance.
+
+Ne pas prétendre disposer de limites indépendantes par sandbox si le produit ne les propose pas.
+
+Étudier les mécanismes complémentaires réellement disponibles.
+
+Valider leur fonctionnement par des tests.
+
+### Privilèges
+
+Utiliser le niveau de privilèges minimum disponible.
+
+Ne pas prétendre que la sandbox empêche toute élévation locale si l'environnement fourni par Google permet sudo.
+
+Vérifier que les limites essentielles ne peuvent pas être désactivées par le programme soumis.
+
+En cas d'impossibilité, documenter la limitation et bloquer l'ouverture publique.
+
+### Fail closed
+
+Si la sandbox est indisponible :
+
+- Refuser l'exécution.
+- Retourner une erreur infrastructure.
+- Journaliser l'incident.
+- Ne jamais exécuter directement la soumission.
+- Ne jamais désactiver l'isolation pour faire passer un test.
+
+## 10. Protocole de communication
+
+Le VPS doit envoyer les soumissions au service Cloud Run via HTTPS.
+
+Le service Cloud Run doit rester privé au sens IAM : aucune invocation anonyme.
+
+Ne jamais exposer directement le runner aux utilisateurs finaux.
+
+Endpoints internes proposés :
+
+- GET /healthz
+- GET /readyz
+- GET /v1/capabilities
+- POST /v1/execute
+
+Le endpoint `/v1/execute` reçoit :
+
+- Identifiant unique de soumission.
+- Identifiant du projet.
+- Liste des fonctions à tester si pertinent.
+- Version des tests.
+- Options validées.
+- Fichiers sources.
+- Limites autorisées.
+
+Utiliser un protocole versionné.
+
+Privilégier multipart/form-data pour transmettre les fichiers et des métadonnées JSON.
+
+Ne pas accepter :
+
+- Des commandes shell arbitraires.
+- Des arguments GCC arbitraires non validés.
+- Des chemins système arbitraires.
+- Des images Docker choisies par les utilisateurs.
+- Des URLs de téléchargement arbitraires.
+- Des scripts d'orchestration personnalisés.
+- Des plugins de tests non approuvés.
+
+Le service Cloud Run n'a pas besoin de connaître l'identité personnelle de l'étudiant.
+
+Transmettre uniquement les informations nécessaires à l'exécution.
+
+## 11. Authentification Google Cloud
+
+Utiliser IAM pour protéger le service Cloud Run.
+
+Créer deux comptes de service distincts.
+
+### ft-moulinette-runtime
+
+Identité du service Cloud Run.
+
+N'accorder aucune permission projet inutile.
+
+Ne pas lui donner les rôles Owner ou Editor.
+
+Il ne doit pas avoir accès aux données de production du VPS.
+
+### ft-moulinette-invoker
+
+Identité utilisée par le worker sur le VPS.
+
+Accorder uniquement le rôle :
+
+`roles/run.invoker`
+
+Restreindre cette permission au service Cloud Run concerné.
+
+### Authentification depuis OVH
+
+Privilégier Workload Identity Federation lorsqu'une identité externe compatible est disponible.
+
+Prévoir une authentification par clé JSON de compte de service comme alternative pour la bêta privée.
+
+Utiliser la bibliothèque officielle `google-auth`.
+
+Générer un ID token Google valide avec pour audience l'URL du service Cloud Run.
+
+Transmettre le token :
+
+`Authorization: Bearer <ID_TOKEN>`
+
+Ne pas utiliser un simple access token OAuth à la place d'un ID token lorsque Cloud Run exige ce dernier.
+
+Gérer :
+
+- Expiration.
+- Renouvellement.
+- Mise en cache sécurisée.
+- Erreurs d'authentification.
+
+Ne jamais journaliser les tokens.
+
+Ne jamais transmettre la clé Google au frontend ou à la sandbox.
+
+Monter les credentials dans le worker OVH en lecture seule avec les secrets Docker.
+
+Ne jamais créer automatiquement une clé permanente sans autorisation explicite.
+
+## 12. Gestion des fichiers
+
+Prendre en charge toutes les méthodes de soumission existantes :
+
+- Fichiers `.c`.
+- Fichiers `.h`.
+- Makefile.
+- Archive ZIP.
+- Dossier complet.
+- Plusieurs fichiers.
+- Code collé.
+- Dépôt Git si déjà implémenté.
+
+Préserver les chemins relatifs.
+
+Valider les entrées sur le VPS et sur le runner.
+
+Prévoir des limites initiales configurables :
+
+- Upload total : 5 Mio.
+- Taille décompressée : 20 Mio.
+- Maximum 200 fichiers.
+- Maximum 2 Mio par fichier.
+- Sortie de logs : 256 Kio.
+- Rapport JSON : 1 Mio.
+
+Ces limites sont des valeurs de départ à ajuster selon les projets.
+
+Protéger contre :
+
+- Zip Slip.
+- Traversée de répertoires.
+- Bombes ZIP.
+- Archives imbriquées.
+- Liens symboliques.
+- Liens physiques.
+- Fichiers spéciaux.
+- Noms dupliqués après normalisation.
+- Écrasement de fichiers.
+- Extensions inattendues.
+
+Ne jamais extraire des fichiers dans un dossier contenant les composants de confiance.
+
+Ne jamais exécuter un Makefile sur le VPS ou dans le conteneur parent.
+
+## 13. Cycle de vie d'une soumission
+
+Le processus cible est le suivant :
+
+1. L'utilisateur soumet son projet.
+2. FastAPI valide les fichiers et les quotas.
+3. Une soumission est créée dans PostgreSQL.
+4. Une tâche est placée dans Redis/RQ.
+5. Le worker récupère la tâche.
+6. CloudRunRunner obtient un ID token.
+7. Le worker appelle le service Cloud Run.
+8. Le service valide la requête.
+9. Un espace temporaire unique est créé.
+10. Une sandbox éphémère est lancée.
+11. Les sources et les tests nécessaires sont transférés.
+12. La Norminette est exécutée.
+13. Le projet est compilé.
+14. Les tests fonctionnels sont exécutés.
+15. Les tests mémoire compatibles sont exécutés.
+16. Le rapport est récupéré et validé.
+17. La sandbox est détruite.
+18. Les fichiers temporaires sont supprimés.
+19. Le rapport est retourné au VPS.
+20. PostgreSQL enregistre le résultat.
+21. L'interface web affiche le rapport.
+
+Le nettoyage doit être garanti autant que possible via des blocs finally et des mécanismes de récupération après incident.
+
+## 14. Timeout et annulation
+
+Définir plusieurs niveaux de timeout.
+
+Valeurs initiales :
+
+- Compilation : 15 secondes.
+- Test individuel : 3 secondes.
+- Analyse mémoire : 15 secondes.
+- Soumission globale : 60 secondes.
+- Requête Cloud Run : 120 secondes.
+
+Ces valeurs doivent être adaptées aux projets.
+
+Une requête HTTP interrompue ne garantit pas automatiquement l'arrêt du traitement Cloud Run.
+
+Implémenter un mécanisme interne de deadline.
+
+Vérifier la terminaison des processus et de la sandbox.
+
+Ne pas annoncer une annulation effective si elle ne peut pas être confirmée.
+
+Éviter les exécutions orphelines.
+
+## 15. Rapports
+
+Réutiliser le format JSON commun à ft-moulinette.
+
+Ajouter des métadonnées :
+
+- Backend : cloudrun.
+- Version du moteur.
+- Version des tests.
+- Version de l'image d'exécution.
+- Durée totale.
+- Durée de compilation.
+- Durée des tests.
+- Statut de la sandbox.
+- Motif d'interruption.
+- Analyseurs utilisés.
+- Analyseurs indisponibles.
+
+Distinguer les statuts :
+
+- success
+- compilation_error
+- norm_error
+- test_failure
+- memory_error
+- timeout
+- resource_limit
+- cancelled
+- infrastructure_error
+- sandbox_unavailable
+- unsupported
+
+Adapter ces statuts au schéma existant.
+
+Les résultats produits par un programme soumis ne doivent jamais être considérés automatiquement comme fiables.
+
+Les tests de confiance et les résultats attendus doivent être protégés contre les modifications par le programme évalué.
+
+Ne pas déterminer la réussite uniquement à partir d'un message stdout ou d'un code de sortie contrôlé par l'utilisateur.
+
+Valider la structure et la taille du rapport avant enregistrement.
+
+Échapper les sorties dans l'interface web.
+
+## 16. Compatibilité des outils C
+
+Vérifier réellement le fonctionnement dans Cloud Run Sandboxes de :
+
+- GCC.
+- Clang.
+- Make.
+- Norminette.
+- Valgrind.
+- ASan.
+- UBSan.
+- Signaux POSIX.
+- Pipes.
+- Fork.
+- Exec.
+- Threads.
+- Ptrace si nécessaire.
+- Tests utilisant des pseudo-terminaux.
+
+Certains projets 42 nécessitent des fonctionnalités système spécifiques.
+
+Ne pas supposer qu'elles sont disponibles dans un environnement sandboxé.
+
+Si Valgrind ne fonctionne pas :
+
+- Étudier ASan et UBSan.
+- Documenter les différences.
+- Indiquer quel analyseur a été utilisé.
+- Marquer les tests incompatibles comme non exécutés.
+- Ne jamais produire de faux résultat positif.
+
+Conserver une matrice de compatibilité par backend et par projet.
+
+Ne pas affaiblir l'isolation pour rendre un outil compatible.
+
+## 17. Configuration Docker Compose OVH
+
+Adapter le déploiement existant.
+
+Ajouter au worker uniquement les variables nécessaires :
+
+    EXECUTION_BACKEND=cloudrun
+    GCP_PROJECT_ID=
+    GCP_REGION=europe-west1
+    CLOUD_RUN_URL=
+    GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp_invoker
+    EXECUTION_TIMEOUT=60
+    MAX_CONCURRENT_JOBS=2
+
+Utiliser un secret Docker nommé :
+
+`gcp_invoker`
+
+Le secret doit être accessible uniquement au worker concerné.
+
+Le frontend et l'API publique ne doivent pas accéder directement aux credentials Google.
+
+Préserver :
+
+- Le réseau externe proxy.
+- Le réseau interne de PostgreSQL.
+- Le réseau interne de Redis.
+- La compatibilité Nginx Proxy Manager.
+
+Aucun nouveau port public ne doit être nécessaire sur le VPS pour le runner.
+
+Fournir un `.env.example` sans secret.
+
+## 18. Scripts de déploiement GCP
+
+Créer les fichiers suivants.
+
+### bootstrap.sh
+
+Doit permettre de :
+
+- Vérifier les prérequis.
+- Configurer le projet.
+- Configurer la région.
+- Activer les API Google nécessaires.
+- Créer Artifact Registry.
+- Créer les comptes de service.
+- Préparer les permissions minimales.
+
+Le script doit être idempotent autant que possible.
+
+Ne pas créer automatiquement de clés permanentes.
+
+Ne pas activer de facturation ou de ressources coûteuses sans autorisation.
+
+### build.sh
+
+Doit permettre de :
+
+- Construire runner-api.
+- Construire sandbox-c.
+- Exécuter les tests disponibles.
+- Taguer les images.
+- Publier les images sur Artifact Registry.
+- Récupérer les digests.
+
+Privilégier les digests d'images pour les déploiements reproductibles.
+
+### service.yaml.template
+
+Doit configurer :
+
+- Cloud Run Service.
+- Environnement Gen 2.
+- Sandbox launcher.
+- Sandbox template c-execution.
+- Image runner-api.
+- Image sandbox-c.
+- Volumes temporaires nécessaires.
+- Sous-répertoires isolés.
+- Identité runtime.
+- CPU.
+- RAM.
+- Concurrence.
+- Autoscaling.
+- Timeout.
+- Variables d'environnement non sensibles.
+
+Utiliser la syntaxe officielle actuelle.
+
+Ne pas inventer de champs YAML.
+
+Inclure les annotations Preview/Beta requises.
+
+### deploy.sh
+
+Doit permettre de :
+
+- Générer le manifeste.
+- Vérifier les variables.
+- Déployer le service.
+- Configurer IAM.
+- Vérifier l'absence d'accès anonyme.
+- Vérifier l'activation des sandboxes.
+- Afficher l'URL du service.
+- Afficher les étapes de configuration du VPS.
+
+Ne jamais activer automatiquement `--allow-unauthenticated`.
+
+### smoke-test.sh
+
+Doit permettre de :
+
+- Vérifier le service.
+- Vérifier IAM.
+- Vérifier le sandbox launcher.
+- Exécuter une soumission C minimale.
+- Vérifier la compilation.
+- Vérifier le résultat.
+- Vérifier l'isolation réseau.
+- Vérifier l'absence d'accès aux credentials.
+- Vérifier le nettoyage.
+
+Le script doit retourner un code d'erreur si une vérification essentielle échoue.
+
+## 19. Gestion des coûts
+
+L'objectif initial est une bêta privée de 5 à 15 utilisateurs.
+
+Configuration recommandée :
+
+- 0 instance minimum.
+- 2 instances maximum.
+- 1 requête simultanée par instance.
+- 1 vCPU.
+- 2 Gio de RAM.
+- Facturation par requête.
+- Timeout strict.
+
+Mettre en place des quotas côté application :
+
+- 20 soumissions par utilisateur et par jour.
+- 1 soumission simultanée par utilisateur.
+- 2 soumissions simultanées globalement.
+- File d'attente bornée.
+- Limitation des tentatives répétées.
+- Limitation du volume de logs.
+
+Rendre ces valeurs configurables.
+
+Prévoir un interrupteur administrateur permettant de désactiver immédiatement les exécutions distantes.
+
+Prévoir un plafond applicatif global configurable.
+
+Ne pas présenter les plafonds applicatifs ou les alertes budgétaires Google comme une garantie absolue contre les frais.
+
+Documenter les coûts potentiels :
+
+- Cloud Run.
+- Artifact Registry.
+- Cloud Build.
+- Cloud Logging.
+- Transfert réseau.
+- Stockage éventuel.
+
+Prévoir une politique de nettoyage des anciennes images Docker.
+
+Créer une documentation pour les alertes budgétaires.
+
+## 20. Gestion des erreurs et résilience
+
+Gérer proprement :
+
+- HTTP 401.
+- HTTP 403.
+- HTTP 429.
+- HTTP 500.
+- HTTP 503.
+- Timeout réseau.
+- Démarrage à froid.
+- Sandbox indisponible.
+- Quota Google dépassé.
+- Mémoire insuffisante.
+- Rapport invalide.
+- Interruption de connexion.
+
+Utiliser des identifiants de soumission uniques.
+
+Prévoir une stratégie de déduplication.
+
+Ne pas promettre une exécution exactement une fois si l'infrastructure ne le garantit pas.
+
+Limiter les retries.
+
+Ne pas relancer automatiquement une soumission si son état réel est inconnu sans mécanisme de déduplication approprié.
+
+Ne jamais rediriger une soumission distante vers le VPS pour contourner une erreur.
+
+## 21. Tests de sécurité
+
+Ajouter des tests contrôlés permettant de vérifier :
+
+- Boucle infinie.
+- Consommation excessive de mémoire.
+- Création excessive de processus.
+- Production excessive de logs.
+- Création excessive de fichiers.
+- Lecture de fichiers non autorisés.
+- Accès réseau.
+- Accès au serveur de métadonnées.
+- Accès aux credentials.
+- Makefile contenant des opérations non autorisées.
+- Archives malformées.
+- Traversée de répertoires.
+- Liens symboliques.
+- Tentative d'altération des résultats.
+- Tentative de lecture d'une autre soumission.
+- Interruption brutale.
+- Nettoyage après timeout.
+
+Réaliser les tests adversariaux uniquement dans un environnement de validation explicitement autorisé et isolé.
+
+Ne jamais les lancer sur le VPS de production.
+
+Ne pas produire de test destructeur non borné.
+
+Documenter les résultats réels.
+
+Ne pas déclarer l'isolation validée si les tests n'ont pas été exécutés sur Google Cloud.
+
+## 22. Observabilité
+
+Ajouter des logs structurés contenant :
+
+- Identifiant de soumission.
+- Backend.
+- Durée.
+- Statut.
+- Version des tests.
+- Version de l'image.
+- Catégorie d'erreur.
+
+Ne jamais journaliser :
+
+- Le code source complet.
+- Les credentials.
+- Les ID tokens.
+- Les données personnelles inutiles.
+
+Prévoir des métriques :
+
+- Soumissions par jour.
+- Durée moyenne.
+- Jobs en attente.
+- Taux d'échec.
+- Timeouts.
+- Erreurs d'infrastructure.
+- Sandbox indisponible.
+- Consommation estimée.
+
+Éviter un volume excessif de Cloud Logging.
+
+## 23. Interface web
+
+Adapter l'interface web pour afficher :
+
+- En attente.
+- Préparation.
+- Exécution distante.
+- Analyse des résultats.
+- Terminé.
+- Erreur infrastructure.
+
+Ne pas inventer de progression détaillée si le runner ne transmet pas réellement cette information.
+
+Afficher clairement la différence entre :
+
+- Un test échoué.
+- Une compilation échouée.
+- Une erreur de Google Cloud.
+- Une fonctionnalité non supportée.
+- Une limite de ressources atteinte.
+
+Ajouter une section administrative permettant de consulter :
+
+- État du runner.
+- File d'attente.
+- Quotas.
+- Nombre de soumissions.
+- Disponibilité du backend.
+- Consommation estimée.
+
+Prévoir l'affichage d'un message de maintenance si les exécutions sont désactivées.
+
+## 24. Intégrations CLI et IDE
+
+Préserver les exécutions locales.
+
+Ajouter un mode distant optionnel dans :
+
+- Le CLI.
+- Neovim.
+- VS Code.
+- CLion.
+
+Les intégrations doivent communiquer avec l'API ft-moulinette hébergée sur OVH, jamais directement avec Google Cloud Run.
+
+Elles ne doivent jamais posséder les credentials Google Cloud.
+
+L'authentification des utilisateurs doit être distincte de l'authentification machine-à-machine.
+
+Les résultats doivent utiliser le même format que les exécutions locales.
+
+Aucun utilisateur ne doit être obligé de créer un compte Google Cloud.
+
+## 25. CI/CD
+
+Adapter GitHub Actions pour :
+
+- Tester CloudRunRunner avec des mocks.
+- Tester les schémas API.
+- Tester la validation des fichiers.
+- Tester la gestion des erreurs.
+- Construire les images Docker.
+- Analyser les dépendances.
+- Analyser les images.
+- Valider les manifests.
+- Exécuter les tests de non-régression.
+
+Prévoir un workflow de déploiement Google Cloud manuel.
+
+Privilégier GitHub OIDC et Workload Identity Federation pour le CI/CD.
+
+Ne pas stocker de clé JSON Google Cloud dans le dépôt.
+
+Ne pas déployer automatiquement en production après chaque commit.
+
+## 26. Documentation
+
+Créer ou compléter :
+
+- docs/cloudrun.md
+- docs/cloudrun-security.md
+- docs/cloudrun-costs.md
+- docs/architecture.md
+- docs/docker-deployment.md
+
+Expliquer :
+
+- La création du projet Google Cloud.
+- L'activation des API.
+- Artifact Registry.
+- IAM.
+- Les sandbox templates.
+- L'authentification depuis OVH.
+- Le déploiement.
+- Les variables d'environnement.
+- Le fonctionnement du moteur.
+- Les limites de compatibilité.
+- Les coûts.
+- Les quotas.
+- La surveillance.
+- La mise à jour des images.
+- La rotation des clés si utilisées.
+- La désactivation du service.
+- La suppression des ressources.
+- Le dépannage.
+
+Documenter clairement le statut Preview de Cloud Run Sandboxes.
+
+Prévoir une procédure de migration vers une autre technologie d'isolation si nécessaire.
+
+## 27. Critères d'acceptation
+
+La mission est terminée uniquement si :
+
+- Le CLI historique reste fonctionnel.
+- Les interfaces locales restent autonomes.
+- CloudRunRunner est implémenté.
+- Le protocole distant est versionné.
+- Les deux Dockerfiles existent.
+- Les images peuvent être construites.
+- Le manifeste Cloud Run est fourni.
+- Le sandbox template est configuré.
+- Le service exige une authentification IAM.
+- Le worker utilise un ID token valide.
+- Les soumissions ne sont jamais exécutées sur OVH.
+- Le code non fiable est isolé dans une sandbox.
+- Le réseau de la sandbox est bloqué.
+- Les fichiers sont isolés par soumission.
+- Les limites de ressources sont appliquées.
+- Les timeouts sont gérés.
+- Les rapports sont cohérents.
+- Les erreurs infrastructure sont distinguées.
+- Les quotas sont configurables.
+- Les scripts de déploiement existent.
+- La documentation est complète.
+- Les tests locaux et mocks passent.
+- Les validations Google Cloud sont documentées.
+
+Si l'accès à Google Cloud n'est pas disponible pendant le développement, implémenter et tester tout ce qui est possible localement.
+
+Fournir ensuite une liste précise des commandes et vérifications restant à effectuer sur GCP.
+
+Ne jamais présenter un test mock comme une validation réelle de l'isolation Cloud Run.
+
+## 28. Ordre d'implémentation
+
+Phase 1 :
+- Audit du dépôt.
+- Abstraction ExecutionBackend.
+- Tests de non-régression.
+- CloudRunRunner.
+
+Phase 2 :
+- API distante.
+- Protocole de soumission.
+- Validation des fichiers.
+- Rapports.
+- Authentification IAM.
+
+Phase 3 :
+- Images Docker.
+- Sandbox templates.
+- Isolation.
+- Limites.
+- Tests de sécurité.
+
+Phase 4 :
+- Intégration Redis/RQ.
+- Docker Compose OVH.
+- Configuration.
+- Gestion des erreurs.
+
+Phase 5 :
+- Scripts Google Cloud.
+- Déploiement reproductible.
+- CI/CD.
+- Documentation.
+
+Phase 6 :
+- Interface web.
+- CLI distant.
+- Intégrations IDE.
+- Observabilité.
+
+Phase 7 :
+- Validation réelle sur Google Cloud.
+- Mesures de performance.
+- Mesures de consommation.
+- Audit de sécurité.
+- Préparation de la bêta privée.
+
+## 29. Instructions finales
+
+Commencer immédiatement par analyser le dépôt réel.
+
+Ne pas se limiter à proposer une architecture.
+
+Implémenter les composants nécessaires de manière incrémentale.
+
+À chaque étape :
+
+- Écrire du code réel.
+- Ajouter des tests.
+- Exécuter les vérifications disponibles.
+- Corriger les erreurs.
+- Mettre à jour la documentation.
+- Préserver les fonctionnalités existantes.
+- Utiliser des Conventional Commits lorsque possible.
+
+Ne créer aucune ressource Google Cloud facturable sans autorisation explicite.
+
+Ne pas demander de credentials dans les fichiers du dépôt.
+
+Ne jamais contourner une restriction de sécurité pour rendre un test fonctionnel.
+
+L'objectif est de disposer d'un moteur d'exécution C distant, sécurisé, économique, remplaçable et compatible avec toutes les interfaces de ft-moulinette.
