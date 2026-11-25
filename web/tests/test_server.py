@@ -12,10 +12,12 @@ from ft_moulinette_web.jobs import REPO_CLI
 from ft_moulinette_web.server import Server
 
 
-def fake_engine(directory, body):
+def fake_engine(directory, body, progress=True):
     """Moteur factice : script Python appelé à la place de la CLI."""
     script = Path(directory) / 'engine.py'
-    script.write_text('import json, sys, time\n' + body)
+    help_text = 'usage: --json --progress' if progress else 'usage: --json'
+    script.write_text('import json, sys, time\n'
+                      f'if "--help" in sys.argv:\n    print({help_text!r})\n    sys.exit(0)\n' + body)
     return [sys.executable, str(script)]
 
 
@@ -173,6 +175,63 @@ class SlowEngineTests(ServerCase):
         self.assertLess(time.time() - started, 5)
 
 
+PROGRESS_ENGINE = """
+target = sys.argv[1]
+rows = [dict(file=target + '/ft_a.c', line=1, column=1, check='compile', status='pass', message='ok'),
+        dict(file=target + '/ft_b.c', line=4, column=2, check='norm', status='fail', message='Erreur de norme')]
+for row in rows:
+    print(json.dumps(dict(event='result', result=row)), file=sys.stderr, flush=True)
+print('avertissement libre', file=sys.stderr, flush=True)
+while not (Path(target) / 'go').exists():
+    time.sleep(0.05)
+print(json.dumps(dict(schema_version=1, module='libft-1.3', summary=dict(passed=1), results=rows)))
+sys.exit(1)
+"""
+
+
+class ProgressTests(ServerCase):
+    def setUp(self):
+        self.engine = fake_engine(tempfile.mkdtemp(), 'from pathlib import Path\n' + PROGRESS_ENGINE)
+        super().setUp()
+
+    def test_partial_results_are_exposed_while_running(self):
+        self.assertTrue(self.server.manager.progress)
+        job = self.request('POST', '/api/runs', dict(target=str(self.temp)))[1]
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            current = self.request('GET', f'/api/runs/{job["id"]}')[1]
+            if current.get('progress', {}).get('count') == 2:
+                break
+            time.sleep(0.05)
+        self.assertEqual(current['status'], 'running')
+        self.assertEqual(current['progress']['summary'], {'pass': 1, 'fail': 1})
+        self.assertEqual([r['check'] for r in current['partial']], ['norm'])  # seulement les problèmes
+        self.assertEqual(current['partial'][0]['relative'], 'ft_b.c')
+        self.assertNotIn('partial', self.request('GET', '/api/runs')[1]['runs'][0])
+        (self.temp / 'go').write_text('')
+        final = self.wait(job['id'], 10)
+        self.assertEqual(final['status'], 'done')
+        self.assertNotIn('partial', final)
+        self.assertEqual(len(final['report']['results']), 2)
+
+
+class LegacyEngineTests(ServerCase):
+    def setUp(self):
+        report = dict(schema_version=1, module='libft-1.3', summary={}, results=[])
+        self.engine = fake_engine(tempfile.mkdtemp(),
+                                  'if "--progress" in sys.argv:\n'
+                                  '    print("x: error: unrecognized arguments: --progress", file=sys.stderr)\n'
+                                  '    sys.exit(2)\n'
+                                  f'print(json.dumps({report!r}))\n', progress=False)
+        super().setUp()
+
+    def test_engine_without_progress_still_works(self):
+        self.assertFalse(self.server.manager.progress)
+        job = self.wait(self.request('POST', '/api/runs', dict(target=str(self.temp)))[1]['id'])
+        self.assertEqual(job['status'], 'done', job.get('error'))
+        self.assertNotIn('progress', job)
+
+
 class EngineErrorTests(ServerCase):
     def setUp(self):
         self.engine = fake_engine(tempfile.mkdtemp(),
@@ -184,6 +243,7 @@ class EngineErrorTests(ServerCase):
         job = self.wait(self.request('POST', '/api/runs', dict(target=str(self.temp)))[1]['id'])
         self.assertEqual(job['status'], 'error')
         self.assertEqual(job['error'], 'Indiquer un dossier')
+        self.assertNotIn('progress', job)
         self.assertEqual(job['exit_code'], 2)
 
 

@@ -54,11 +54,12 @@ def detect_project(target, subject='auto'):
     return 'libft'
 
 
-def run(target, norm=True, memory=True, iterations=500, seed=42, timeout=15, build=True, subject='auto'):
+def run(target, norm=True, memory=True, iterations=500, seed=42, timeout=15, build=True, subject='auto', progress=None):
+    """progress, s'il est fourni, reçoit chaque résultat dès sa création."""
     subject = detect_project(target, subject)
     if subject == 'printf':
         from .printf import run_printf
-        return run_printf(target, norm, memory, iterations, seed, timeout, build)
+        return run_printf(target, norm, memory, iterations, seed, timeout, build, progress)
     seed = seed % (2 ** 32)
     target = Path(target).resolve()
     if not target.exists() or (target.is_file() and target.suffix not in ('.c', '.h')):
@@ -75,6 +76,8 @@ def run(target, norm=True, memory=True, iterations=500, seed=42, timeout=15, bui
             row['raw_message'] = row['message']
             row['message'] = explanation
         results.append(row)
+        if progress is not None:
+            progress(row)
     selected = sorted(root.glob('*.c')) if target.is_dir() else ([target] if target.suffix == '.c' else [])
     with tempfile.TemporaryDirectory(prefix='ft-moulinette-') as temp:
         work = Path(temp)

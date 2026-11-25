@@ -79,7 +79,8 @@ Chaque résultat possède `file`, `line`, `column`, `check`, `status`, `message`
 - `summary` ne contient que les statuts présents.
 - Les chemins des résultats et diagnostics doivent désigner les fichiers originaux.
 - Le préfixe `archive:` identifie les tests contre l’archive produite par le Makefile.
-- Les intégrations VSCode et Neovim consomment ce JSON ; ne pas en changer la structure sans examiner ces consommateurs et les tests.
+- Les intégrations VSCode et Neovim, ainsi que l’interface web, consomment ce JSON ; ne pas en changer la structure sans examiner ces consommateurs et les tests.
+- `--progress` écrit sur stderr une ligne `{"event": "result", "result": <résultat>}` par résultat, au moment de sa création, via le paramètre `progress` de `engine.run()` et de `run_printf()`. Le flux doit rester identique, dans l’ordre, à `results` ; stdout ne change pas. Tout nouveau point de création de résultat doit passer par les fonctions `add` existantes pour conserver cette propriété.
 - Sortie 1 si un résultat vaut `fail`, `missing`, `blocked` ou `unavailable` ; 0 sinon ; les erreurs d’arguments et certaines erreurs d’accès sont remontées par argparse avec le code 2.
 
 L’option masquée `--reviewed readme|project|all` et les statuts `manual`/`reviewed` subsistent pour compatibilité. Le moteur courant ne génère pas de rappels de relecture systématiques. Ne pas présenter cette option comme une validation de conformité ni comme une déclaration persistante.
@@ -146,13 +147,13 @@ Les versions des composants ne sont actuellement pas alignées : paquet Python 0
 | `bin/ft-moulinette-web` | Lanceur, indépendant du dossier courant |
 | `ft_moulinette_web/__main__.py` | Options, refus d’une écoute hors boucle locale sans `--allow-remote`, choix du moteur |
 | `ft_moulinette_web/server.py` | Routes `/`, `/static/*`, `/api/runs[/<id>]`, contrôles `Host`/`Origin`/`Sec-Fetch-Site`, CSP |
-| `ft_moulinette_web/jobs.py` | Validation des demandes, file à un seul exécutant, sous-processus CLI `--json`, annulation, annotation |
+| `ft_moulinette_web/jobs.py` | Validation des demandes, file à un seul exécutant, sous-processus CLI `--json --progress`, lecture de l’avancement, annulation, annotation |
 | `ft_moulinette_web/static/` | `index.html`, `app.js`, `style.css` |
 | `tests/` | Tests unittest du serveur, avec le vrai moteur et des moteurs factices |
 
 Invariants :
 
-- Le serveur **ne réimplémente aucun contrôle** : il exécute la CLI (`--engine`, sinon `../cli/bin/ft-moulinette`, sinon `ft-moulinette` du PATH) avec `--json`. Les codes 0 et 1 accompagnés d’un rapport valide donnent l’état `done` ; tout autre cas donne `error`, avec le message argparse ou la fin de stderr.
+- Le serveur **ne réimplémente aucun contrôle** : il exécute la CLI (`--engine`, sinon `../cli/bin/ft-moulinette`, sinon `ft-moulinette` du PATH) avec `--json`. Il ajoute `--progress` seulement si `--help` du moteur le mentionne, ce qui garde compatible un moteur installé plus ancien. Les lignes d’événements de stderr alimentent `progress` (nombre et statuts reçus) et `partial` (problèmes déjà détectés) ; les autres lignes servent au message d’erreur. Les codes 0 et 1 accompagnés d’un rapport valide donnent l’état `done` ; tout autre cas donne `error`, avec le message argparse ou la fin de stderr.
 - Le rapport conserve le schéma de la CLI. Seuls `label` (via `ft_moulinette.report.check_label`, si `cli/` est importable) et `relative` sont ajoutés à chaque résultat. Les changements de schéma CLI doivent donc aussi être examinés côté `app.js`.
 - La validation serveur reprend les contraintes de la CLI : chemin absolu existant, dossier ou `.c`/`.h`, projet connu, entiers strictement positifs pour itérations et délai.
 - Protections à préserver : écoute locale par défaut, liste fermée de `Host`, refus des mutations d’une autre origine, JSON obligatoire et borné, liste fermée de fichiers statiques, construction du DOM par `textContent` (jamais `innerHTML` avec des données du rapport).
@@ -194,7 +195,8 @@ python3 -m unittest discover -s tests -p 'test_install.py' -v
 | `test_diagnostics.py`, `test_failure_messages.py`, `test_report.py` | Emplacements, messages utiles, présentation et distinction des problèmes |
 | `test_install.py` | Installation/mise à jour, alias, chemins complexes et autonomie après suppression des sources |
 | `test_reviewed.py` | Compatibilité de l’option masquée, sans effacement des erreurs ni persistance |
-| `web/tests/test_server.py`, `web/tests/test_main.py` | Protections HTTP, validation, exécution réelle Libft (succès/échec), annulation, erreurs du moteur, choix du moteur, refus d’écoute réseau |
+| `test_progress.py` | Flux `progress` identique aux résultats (Libft, Printf) ; `--progress` sur stderr sans changer le JSON |
+| `web/tests/test_server.py`, `web/tests/test_main.py` | Protections HTTP, validation, exécution réelle Libft (succès/échec), avancement partiel, moteur sans `--progress`, annulation, erreurs du moteur, choix du moteur, refus d’écoute réseau |
 
 Les tests d’installation utilisent des dossiers personnels temporaires. Ne pas lancer `install.sh` sur la configuration réelle de l’utilisateur pour valider une modification de documentation.
 
@@ -202,7 +204,7 @@ Les tests d’installation utilisent des dossiers personnels temporaires. Ne pas
 
 Commandes lancées depuis `cli/` :
 
-- `python3 -m unittest discover -s tests` : **43 tests exécutés, 43 réussis, aucun ignoré**, en environ 53 secondes. Valgrind 3.25.1 démarre désormais (`valgrind --quiet /bin/true` renvoie 0) : les tests mémoire Libft et Printf ont donc réellement été exécutés.
+- `python3 -m unittest discover -s tests` : **46 tests exécutés, 46 réussis, aucun ignoré**, en environ 59 secondes (dont `test_progress.py`). Valgrind 3.25.1 démarre désormais (`valgrind --quiet /bin/true` renvoie 0) : les tests mémoire Libft et Printf ont donc réellement été exécutés.
 - `node --check integrations/vscode/extension.js` : réussi.
 - `sh -n install.sh package.sh` : réussi.
 - `bin/ft-moulinette --help` lancé depuis un autre dossier : réussi.
@@ -211,11 +213,13 @@ Commandes lancées depuis `cli/` :
 
 Interface web, depuis `web/` :
 
-- `python3 -m unittest discover -s tests -v` : **16 tests exécutés, 16 réussis**, en environ 7 secondes.
+- `python3 -m unittest discover -s tests -v` : **18 tests exécutés, 18 réussis**, en environ 9 secondes.
 - `node --check ft_moulinette_web/static/app.js` : réussi.
 - Firefox headless piloté par WebDriver BiDi, sur une libft de 42 fonctions avec erreurs volontaires (`ft_strlen` faux, `ft_toupper` absent) : rapport affiché, filtres, recherche, détails, lancement depuis le formulaire, état en cours, annulation et refus d’un chemin introuvable vérifiés. Exécution complète en 55 secondes. Aucun dossier temporaire ni processus du moteur restant après l’annulation.
 - `pip install -e ../cli -e .` dans un environnement virtuel temporaire : commande `ft-moulinette-web` et fichiers statiques disponibles.
-- Non vérifiés : thème sombre, petits écrans, navigateurs autres que Firefox.
+- Avancement en direct vérifié dans Firefox : nombre de contrôles, statuts et problèmes déjà détectés pendant l’exécution, puis rapport complet.
+- Thème sombre (préférence `ui.systemUsesDarkTheme`) et largeur de 400 px vérifiés : ordre formulaire → rapport → historique, défilement vers le rapport après envoi.
+- Non vérifiés : navigateurs autres que Firefox.
 
 Un bilan précédent, dans un environnement où Valgrind ne démarrait pas (redirection `memcmp` introuvable dans `ld-linux-x86-64.so.2`), donnait 1 échec (`test_printf.PrintfTests.test_memory_reference_and_leak`) et 2 tests ignorés. Le test mémoire Printf ne vérifie toujours que la présence de l’exécutable Valgrind, et non son démarrage, avant de s’exécuter. Lors d’une nouvelle intervention, relancer les vérifications nécessaires et remplacer ce bilan si de nouvelles preuves sont disponibles.
 
@@ -230,7 +234,7 @@ Un bilan précédent, dans un environnement où Valgrind ne démarrait pas (redi
 | Installation locale | Script et test d’installation présents ; test passé | Bash/Zsh pour les alias ; intégrations conservées séparément |
 | Éditeurs | Intégrations et scripts de build présents | Validation graphique à effectuer dans chaque éditeur |
 | Documentation | README et présent guide rédigés | Actualiser au fil des changements réels |
-| Web | Interface locale, API JSON, file, annulation et tests en place | Pas de progression intermédiaire, d’envoi de fichiers ni de confinement pour un usage réseau |
+| Web | Interface locale, API JSON, file, avancement en direct, annulation et tests en place | Pas d’envoi de fichiers ni de confinement pour un usage réseau ; historique non persistant |
 
 Pistes de travail, à entreprendre seulement si elles correspondent à une demande :
 
@@ -240,6 +244,6 @@ Pistes de travail, à entreprendre seulement si elles correspondent à une deman
 4. Clarifier et harmoniser les versions et la génération des livrables avant une nouvelle distribution.
 5. Étendre les bancs à partir de régressions démontrées ou de nouvelles versions de sujet, avec des attentes explicites et des tests de référence.
 
-6. Web : exposer une progression (par exemple une sortie d’événements de la CLI), puis un mode multi-utilisateur seulement avec un confinement réel de l’exécution.
+6. Web : historique persistant entre deux démarrages ; mode multi-utilisateur seulement avec un confinement réel de l’exécution.
 
 Ne pas déclarer ces étapes terminées sans preuve. Ne pas élargir implicitement le périmètre à d’autres projets 42 ou à une plateforme supplémentaire.

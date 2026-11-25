@@ -42,7 +42,7 @@ def test_printf(links, work, project, execute, add, memory, iterations, seed, ti
             add('ft_printf.h', prefix+'memory:'+group, 'fail' if code else 'pass', out or 'Aucune erreur mémoire')
 
 
-def run_printf(target, norm=True, memory=True, iterations=500, seed=42, timeout=15, build=True):
+def run_printf(target, norm=True, memory=True, iterations=500, seed=42, timeout=15, build=True, progress=None):
     from .engine import execute
     target = Path(target).resolve()
     if not target.exists() or (target.is_file() and target.suffix not in ('.c', '.h')):
@@ -63,6 +63,8 @@ def run_printf(target, norm=True, memory=True, iterations=500, seed=42, timeout=
                 row.update(file=details[0]['file'], line=details[0]['line'],
                            column=details[0]['column'], diagnostics=details)
             rows.append(row)
+            if progress is not None:
+                progress(row)
 
         sources = sorted(p for p in root.rglob('*.c')
                          if not any(part.startswith('.') for part in p.relative_to(root).parts))

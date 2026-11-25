@@ -1,6 +1,6 @@
 # ft-moulinette — interface web
 
-Interface web **locale** de la moulinette : choisis un projet Libft ou ft_printf, lance les contrôles et lis le rapport dans le navigateur, avec filtres par statut, recherche et regroupement par fichier.
+Interface web **locale** de la moulinette : choisis un projet Libft ou ft_printf, lance les contrôles, suis leur avancement en direct et lis le rapport dans le navigateur, avec filtres par statut, recherche et regroupement par fichier.
 
 Elle ne refait aucun contrôle : chaque exécution appelle la CLI de [`../cli/`](../cli/) avec `--json`. Les résultats sont donc identiques à ceux du terminal et des intégrations éditeur. Version : **0.1.0**. Python 3.10+, bibliothèque standard uniquement, aucune étape de build côté navigateur.
 
@@ -31,7 +31,8 @@ Avec pip, dans un environnement virtuel : `pip install -e ../cli -e .`, puis `ft
 1. Indiquer un chemin **absolu** (ou commençant par `~`) : dossier du projet, ou un fichier `.c`/`.h` pour le mode fichier.
 2. Choisir le projet, ou laisser la détection automatique, et les contrôles : Norminette, Valgrind, Makefile et archive. Itérations, graine et délai se trouvent dans les réglages avancés.
 3. Le rapport affiche d’abord les problèmes (`fail`, `missing`, `blocked`, `unavailable`, plus `manual`). Les pastilles de statut servent de filtres, et « Tout afficher » montre aussi les réussites et les contrôles ignorés.
-4. La commande CLI équivalente est affichée, avec un bouton pour la copier et reproduire le résultat dans un terminal.
+4. Pendant l’exécution, la page affiche le nombre de contrôles effectués, leurs statuts et les problèmes déjà détectés, puis le rapport complet à la fin.
+5. La commande CLI équivalente est affichée, avec un bouton pour la copier et reproduire le résultat dans un terminal.
 
 Les exécutions passent **une par une**, dans l’ordre d’envoi, et peuvent être annulées. L’historique (50 entrées au plus) reste en mémoire et se perd à l’arrêt du serveur. Le navigateur retient les derniers réglages et les chemins récents.
 
@@ -53,10 +54,12 @@ Le moteur compile et exécute le code C et le Makefile testés **avec tes droits
 | --- | --- |
 | `POST /api/runs` | Corps `{target, project?, norm?, memory?, build?, iterations?, seed?, timeout?}`. Validation immédiate (400 avec `error` en cas de refus), puis `202` avec l’exécution en file |
 | `GET /api/runs` | Historique, du plus récent au plus ancien, sans les rapports complets |
-| `GET /api/runs/<id>` | État `queued`, `running`, `done`, `error` ou `cancelled` ; `report` contient le JSON de la CLI quand l’état vaut `done` |
+| `GET /api/runs/<id>` | État `queued`, `running`, `done`, `error` ou `cancelled`. Pendant l’exécution, `progress` (`count`, `summary`) et `partial` (problèmes déjà reçus) ; `report` contient le JSON de la CLI quand l’état vaut `done` |
 | `DELETE /api/runs/<id>` | Annule une exécution en attente ou en cours |
 
 Dans `report.results`, chaque résultat reçoit deux champs en plus du schéma de la CLI : `label`, le libellé lisible du contrôle (issu de `ft_moulinette.report.check_label`, quand le moteur du dépôt est importable), et `relative`, le chemin relatif à la cible. Un code de sortie 1 de la CLI reste `done` : il signale des problèmes, pas une erreur du moteur.
+
+L’avancement vient de l’option `--progress` de la CLI. Au démarrage, le serveur vérifie qu’elle figure dans `--help` du moteur. Avec un moteur plus ancien, il s’en passe et la page n’affiche qu’un indicateur d’attente.
 
 ## Développement
 
@@ -67,7 +70,7 @@ python3 -m unittest discover -s tests -v
 node --check ft_moulinette_web/static/app.js
 ```
 
-Les tests démarrent le serveur sur un port libre. Ils couvrent les protections HTTP, la validation, une vraie exécution Libft en mode fichier (succès et échec), l’annulation (en attente et en cours) et les erreurs du moteur, au moyen de moteurs factices.
+Les tests démarrent le serveur sur un port libre. Ils couvrent les protections HTTP, la validation, une vraie exécution Libft en mode fichier (succès et échec), l’avancement partiel, la compatibilité avec un moteur sans `--progress`, l’annulation (en attente et en cours) et les erreurs du moteur, au moyen de moteurs factices.
 
 | Fichier | Rôle |
 | --- | --- |
@@ -78,7 +81,7 @@ Les tests démarrent le serveur sur un port libre. Ils couvrent les protections 
 
 ## Limites
 
-- Aucune progression intermédiaire : la CLI ne produit son JSON qu’à la fin.
 - À l’annulation, le moteur reçoit SIGINT (pour nettoyer ses dossiers temporaires), puis SIGKILL au bout de 5 secondes. Une commande déjà lancée par le moteur dans sa propre session peut continuer jusqu’à son propre délai.
+- L’avancement donne le nombre de contrôles effectués, pas un pourcentage : le moteur ne connaît pas leur nombre total à l’avance.
 - Pas d’envoi de fichiers : la cible doit être lisible sur la machine du serveur.
 - Pas d’installation par `install.sh` ni d’inclusion dans l’archive de `package.sh`.

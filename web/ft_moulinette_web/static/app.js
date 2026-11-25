@@ -27,6 +27,7 @@ const state = {
   query: '',
   pollTimer: null,
   clockTimer: null,
+  scrollToResult: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -131,6 +132,8 @@ async function submitRun(options) {
     const job = await api('/api/runs', { method: 'POST', body: options });
     remember(options);
     select(job.id);
+    // Sur une colonne, le rapport est sous le formulaire : y aller une fois le panneau construit.
+    state.scrollToResult = matchMedia('(max-width: 860px)').matches;
     await refreshRuns();
   } catch (error) {
     showFormError(error.message);
@@ -171,6 +174,14 @@ function renderRuns() {
     },
     el('span', { class: 'run-name', text: basename(run.options.target) }),
     el('span', { class: 'run-meta' }, runBadge(run), el('time', { text: formatTime(run.created) }))))));
+}
+
+function syncRun(job) {
+  // Met l'historique à jour sans attendre le prochain rafraîchissement de la liste.
+  const run = state.runs.find((r) => r.id === job.id);
+  if (!run || (run.status === job.status && run.summary === job.summary)) return;
+  Object.assign(run, { status: job.status, summary: job.summary, module: job.module });
+  renderRuns();
 }
 
 async function refreshRuns() {
@@ -223,6 +234,7 @@ async function poll() {
   if (id !== state.selected) return;
   const wasActive = state.job && ACTIVE.has(state.job.status);
   state.job = job;
+  syncRun(job);
   renderResult();
   if (ACTIVE.has(job.status)) {
     state.pollTimer = setTimeout(poll, 1000);
@@ -245,7 +257,9 @@ function defaultFilters(summary) {
 
 function renderResult() {
   const job = state.job;
-  const key = `${job.id}:${job.status}`;
+  // Pendant l'exécution, reconstruire seulement quand de nouveaux résultats arrivent.
+  const count = job.status === 'running' && job.progress ? job.progress.count : '';
+  const key = `${job.id}:${job.status}:${count}`;
   if (key === state.renderedKey) return updateClock();
   state.renderedKey = key;
   clearInterval(state.clockTimer);
@@ -269,7 +283,7 @@ function renderResult() {
 
   const body = [];
   if (job.status === 'queued') body.push(waiting('En attente : une autre exécution est en cours.'));
-  else if (job.status === 'running') body.push(waiting('Compilation et tests en cours… Un projet complet prend souvent plus d’une minute.'));
+  else if (job.status === 'running') body.push(...runningView(job));
   else if (job.status === 'cancelled') body.push(el('div', { class: 'banner neutral', text: 'Exécution annulée.' }));
   else if (job.status === 'error') {
     body.push(el('div', { class: 'banner bad' },
@@ -280,6 +294,11 @@ function renderResult() {
 
   $('result').replaceChildren(header, command, ...body);
   if (job.status === 'done' && job.report) renderRows(job.report);
+  if (state.scrollToResult) {
+    state.scrollToResult = false;
+    $('result').scrollIntoView({ block: 'start' });
+  }
+  if (job.status === 'running' && job.partial && job.partial.length) renderGroups($('rows'), job.partial);
   updateClock();
   if (ACTIVE.has(job.status)) state.clockTimer = setInterval(updateClock, 1000);
 }
@@ -294,6 +313,30 @@ function updateClock() {
 
 function waiting(text) {
   return el('div', { class: 'banner neutral waiting' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), text);
+}
+
+function summaryChips(summary) {
+  return el('div', { class: 'chips static', 'aria-label': 'Résultats reçus' },
+    ...ORDER.filter((s) => summary[s]).map((status) => el('span', { class: `chip status-${status}`, 'aria-pressed': 'true' },
+      el('span', { class: 'count', text: summary[status] }), ' ',
+      summary[status] > 1 ? STATUS[status].plural : STATUS[status].label)));
+}
+
+function runningView(job) {
+  const progress = job.progress;
+  if (!progress) {
+    return [waiting('Compilation et tests en cours… Un projet complet prend souvent plus d’une minute.')];
+  }
+  const done = progress.count;
+  const view = [waiting(done
+    ? `Compilation et tests en cours… ${done} contrôle${done > 1 ? 's' : ''} effectué${done > 1 ? 's' : ''}.`
+    : 'Préparation de la copie du projet et compilation…')];
+  if (done) view.push(summaryChips(progress.summary));
+  if (job.partial && job.partial.length) {
+    view.push(el('p', { class: 'sub live', text: 'Problèmes déjà détectés — le rapport complet suivra' }),
+      el('div', { id: 'rows', class: 'rows' }));
+  }
+  return view;
 }
 
 function reportView(report) {
@@ -347,6 +390,10 @@ function renderRows(report) {
   if (!rows.length) {
     return container.replaceChildren(el('p', { class: 'empty', text: 'Aucun résultat ne correspond aux filtres.' }));
   }
+  renderGroups(container, rows);
+}
+
+function renderGroups(container, rows) {
   const groups = new Map();
   for (const row of rows) {
     const file = row.relative || row.file;

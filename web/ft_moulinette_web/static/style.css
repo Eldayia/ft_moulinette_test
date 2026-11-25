@@ -87,7 +87,6 @@ button, input, select { font: inherit; color: inherit; }
   margin: 0 auto;
   padding: 20px 24px;
 }
-@media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
 .side { display: flex; flex-direction: column; gap: 20px; }
 .card {
   background: var(--surface);
@@ -303,3 +302,17 @@ input:focus-visible, select:focus-visible, button:focus-visible, summary:focus-v
 .row details pre { padding: 8px 10px; background: var(--surface-2); border-radius: 6px; }
 .sub { margin: 8px 0 0; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
 .locations { margin: 4px 0 0; padding-left: 18px; font-size: 0.82rem; }
+
+.chips.static .chip { cursor: default; }
+.sub.live { margin: 4px 0 -4px; }
+
+/* En dernier : doit l’emporter sur les règles de mise en page ci-dessus. */
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  /* Une seule colonne : formulaire, rapport, puis historique. */
+  .side { display: contents; }
+  #run-form { order: 1; }
+  /* Hauteur d'écran : le défilement après envoi peut amener le rapport en haut. */
+  .result { order: 2; min-height: 100vh; scroll-margin-top: 12px; }
+  .history { order: 3; }
+}

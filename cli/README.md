@@ -177,6 +177,7 @@ Syntaxe : `ft-moulinette [cible] [options]`.
 | `--iterations N` | `500` | Nombre d’itérations des boucles pseudo-aléatoires, entier positif |
 | `--seed N` | `42` | Graine pseudo-aléatoire, normalisée sur 32 bits |
 | `--timeout SECONDES` | `15` | Délai par commande ou exécution, entier positif |
+| `--progress` | Désactivé | Écrit chaque résultat sur la sortie d’erreur dès sa création, une ligne JSON `{"event": "result", "result": {…}}` par résultat ; la sortie standard est inchangée |
 | `-h`, `--help` | — | Affiche l’aide |
 
 Le timeout n’est pas une limite globale : un projet déclenche de nombreuses commandes. Les exécutions des bancs sous Valgrind bénéficient d’au moins 30 secondes chacune.
@@ -271,6 +272,8 @@ Le JSON contient :
 | `results` | Liste des contrôles individuels |
 
 Chaque résultat contient `file`, `line`, `column`, `check`, `status` et `message`. Selon le contrôle, `diagnostics` fournit plusieurs emplacements et `raw_message` conserve le diagnostic brut. Les identifiants préfixés par `archive:` correspondent aux tests contre l’archive du Makefile.
+
+Avec `--progress`, les mêmes résultats sont aussi écrits un par un sur la sortie d’erreur pendant l’exécution, dans l’ordre du rapport final. L’interface web s’en sert pour afficher l’avancement.
 
 Un code 0 signifie que les contrôles exécutés n’ont pas signalé de problème ; il ne certifie pas la conformité au sujet.
 

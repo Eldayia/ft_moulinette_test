@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 import uuid
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from pathlib import Path
 
 import sys
@@ -23,6 +23,8 @@ MAX_QUEUED = 20
 MAX_HISTORY = 50
 # Statuts qui donnent le code de sortie 1 côté CLI.
 PROBLEMS = ('fail', 'missing', 'blocked', 'unavailable')
+MAX_STDERR_LINES = 200
+EVENT_PREFIX = '{"event"'
 
 try:
     from ft_moulinette.report import check_label
@@ -86,23 +88,42 @@ def cli_arguments(options):
                    '--timeout', str(options['timeout'])]
 
 
-def annotate(report, target):
-    """Ajoute à chaque résultat un libellé lisible et un chemin relatif à la cible."""
+def target_root(target):
     target = Path(target)
-    root = target if target.is_dir() else target.parent
-    for row in report.get('results', []):
-        if check_label is not None:
-            try:
-                row['label'] = check_label(row['check'])
-            except Exception:  # un libellé manquant ne doit pas masquer le résultat
-                pass
+    return target if target.is_dir() else target.parent
+
+
+def annotate_row(row, root):
+    """Ajoute un libellé lisible et un chemin relatif à la cible."""
+    if check_label is not None:
         try:
-            row['relative'] = os.path.relpath(row['file'], root)
-        except (TypeError, ValueError):
-            row['relative'] = row.get('file')
-        if row['relative'].startswith('..'):
-            row['relative'] = row['file']
+            row['label'] = check_label(row['check'])
+        except Exception:  # un libellé manquant ne doit pas masquer le résultat
+            pass
+    try:
+        row['relative'] = os.path.relpath(row['file'], root)
+    except (TypeError, ValueError):
+        row['relative'] = row.get('file')
+    if not isinstance(row['relative'], str) or row['relative'].startswith('..'):
+        row['relative'] = row.get('file')
+    return row
+
+
+def annotate(report, target):
+    root = target_root(target)
+    for row in report.get('results', []):
+        annotate_row(row, root)
     return report
+
+
+def supports_progress(engine, timeout=10):
+    """Un moteur plus ancien refuserait --progress : on le détecte via --help."""
+    try:
+        result = subprocess.run([*engine, '--help'], capture_output=True, text=True, timeout=timeout,
+                                stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return '--progress' in result.stdout
 
 
 class Job:
@@ -117,11 +138,17 @@ class Job:
         self.error = None
         self.process = None
         self.cancel_requested = False
+        self.partial = []          # résultats problématiques reçus pendant l'exécution
+        self.counts = Counter()    # statuts reçus pendant l'exécution
 
     def to_dict(self, full=True):
         data = dict(id=self.id, status=self.status, options=self.options, created=self.created,
                     started=self.started, finished=self.finished, exit_code=self.exit_code,
                     error=self.error, command=shlex.join(['ft-moulinette', *cli_arguments(self.options)]))
+        if self.status == 'running' or self.counts:
+            data['progress'] = dict(count=sum(self.counts.values()), summary=dict(self.counts))
+            if full and self.status in ACTIVE:
+                data['partial'] = list(self.partial)
         if self.report is not None:
             data['summary'] = self.report.get('summary', {})
             data['module'] = self.report.get('module')
@@ -133,9 +160,10 @@ class Job:
 class JobManager:
     """Exécute les demandes une par une : chaque exécution est déjà lourde en processus."""
 
-    def __init__(self, engine, grace=5.0):
+    def __init__(self, engine, grace=5.0, progress=None):
         self.engine = list(engine)
         self.grace = grace
+        self.progress = supports_progress(self.engine) if progress is None else progress
         self.jobs = OrderedDict()
         self.lock = threading.Lock()
         self.wakeup = threading.Condition(self.lock)
@@ -224,16 +252,45 @@ class JobManager:
                 job.status, job.started = 'running', time.time()
                 try:
                     job.process = subprocess.Popen(
-                        [*self.engine, *cli_arguments(job.options), '--json'],
+                        [*self.engine, *cli_arguments(job.options), '--json',
+                         *(['--progress'] if self.progress else [])],
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
                         start_new_session=True)
                 except OSError as exc:
                     job.status, job.finished = 'error', time.time()
                     job.error = f'Impossible de lancer le moteur : {exc}'
                     continue
-            stdout, stderr = job.process.communicate()
+            stderr = []
+            reader = threading.Thread(target=self._read_events, args=(job, stderr), daemon=True)
+            reader.start()
+            stdout = job.process.stdout.read()
+            reader.join()
+            job.process.wait()
+            job.process.stdout.close()
+            job.process.stderr.close()
             with self.lock:
-                self._finish(job, job.process.returncode, stdout, stderr)
+                self._finish(job, job.process.returncode, stdout, '\n'.join(stderr).encode())
+
+    def _read_events(self, job, other):
+        """Lit stderr ligne à ligne : événements --progress, sinon texte gardé pour le diagnostic."""
+        root = target_root(job.options['target'])
+        for raw in job.process.stderr:
+            line = raw.decode(errors='replace').rstrip('\n')
+            event = None
+            if line.startswith(EVENT_PREFIX):
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    pass
+            row = event.get('result') if isinstance(event, dict) and event.get('event') == 'result' else None
+            if not isinstance(row, dict) or 'status' not in row:
+                other.append(line)
+                del other[:-MAX_STDERR_LINES]
+                continue
+            with self.lock:
+                job.counts[row['status']] += 1
+                if row['status'] in PROBLEMS:
+                    job.partial.append(annotate_row(row, root))
 
     def _finish(self, job, code, stdout, stderr):
         job.finished, job.exit_code = time.time(), code
@@ -248,6 +305,7 @@ class JobManager:
         if code in (0, 1) and isinstance(report, dict) and 'results' in report:
             job.report = annotate(report, job.options['target'])
             job.status = 'done'
+            job.partial = []
             return
         job.status = 'error'
         lines = [line for line in text.splitlines() if line.strip()]

@@ -37,10 +37,10 @@ def is_loopback(host):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, engine, allow_remote=False):
+    def __init__(self, address, engine, allow_remote=False, progress=None):
         super().__init__(address, Handler)
         self.allow_remote = allow_remote
-        self.manager = JobManager(engine)
+        self.manager = JobManager(engine, progress=progress)
         port = self.server_address[1]
         self.allowed_hosts = {f'{name}:{port}' for name in ('localhost', '127.0.0.1', '[::1]')}
 
