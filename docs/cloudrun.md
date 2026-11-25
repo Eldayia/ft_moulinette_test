@@ -2,7 +2,7 @@
 
 Ce document suit la mission décrite dans [AGENT.md](../AGENT.md). Il distingue ce qui est **vérifié dans la documentation officielle**, ce qui est **implémenté et testé localement**, et ce qui **reste à valider sur Google Cloud**. Aucun test local ou mock ne vaut validation de l’isolation Cloud Run.
 
-**Statut au 25 novembre 2026 :** phase 1 en cours. Aucune ressource Google Cloud n’a été créée. Aucun accès Google Cloud (ni `gcloud`, ni credentials) n’est disponible dans l’environnement de développement.
+**Statut au 25 novembre 2026 :** phase 1 terminée (abstraction, protocole, validation des fichiers, `LocalRunner`, `MockRunner`, client `CloudRunRunner`, tests locaux) ; phase 2 à faire. Aucune ressource Google Cloud n’a été créée. Aucun accès Google Cloud (ni `gcloud`, ni credentials) n’est disponible dans l’environnement de développement.
 
 ## 1. Audit du dépôt
 
@@ -112,13 +112,20 @@ Le résultat global (`outcome`) est dérivé des contrôles par du code de confi
 
 | Phase | Contenu | État |
 | --- | --- | --- |
-| 1 | Audit, abstraction, protocole, validation des fichiers, `LocalRunner`, `MockRunner`, `CloudRunRunner` (client), tests de non-régression | En cours |
+| 1 | Audit, abstraction, protocole, validation des fichiers, `LocalRunner`, `MockRunner`, `CloudRunRunner` (client), tests de non-régression | Fait (65 tests `runners/`, voir §5.1) |
 | 2 | Service runner-api (FastAPI), orchestration `sandbox`, rapports, vérification IAM côté client | À faire |
 | 3 | Images Docker, rootfs sandbox, limites, tests de sécurité locaux | À faire |
 | 4 | Fonction de tâche RQ, Compose OVH, configuration, quotas | À faire |
 | 5 | Scripts GCP, CI GitHub Actions, documentation coûts et sécurité | À faire |
 | 6 | Mode distant des intégrations (via l’API OVH), observabilité, interface | À faire (dépend de l’API publique OVH, absente) |
 | 7 | Validation réelle sur Google Cloud | Nécessite ton accès GCP et ton autorisation |
+
+### 5.1 Phase 1 : livré
+
+- Paquet `runners/` (`ft_moulinette_runners`, bibliothèque standard) : `base.py` (interface, types, erreurs `user`/`infrastructure`), `limits.py` (limites §12 et §14, lecture `FTM_LIMIT_*`), `workspace.py` (archive déterministe, validation et extraction sûres), `protocol.py` (métadonnées v1, validation stricte des rapports, résultat global, analyseurs), `execution.py` (lancement borné partagé avec le futur runner), `local.py`, `mock.py`, `cloudrun.py` (client, ID token en modes `key` et `wif`), `config.py` (sélection explicite, refus en production, interrupteur).
+- Correctif moteur : la copie de travail redevient inscriptible quand la source est en lecture seule ; avant, `make` échouait à tort sur un montage `readonly` (`cli/tests/test_readonly.py`).
+- Défauts trouvés et corrigés par les tests : écrasement silencieux de deux noms identiques après normalisation NFC, rapport légitime refusé (champ `message` des diagnostics), liste des fonctions lue avant que le moteur soit importable.
+- Les délais du moteur restent par commande : le délai par test individuel (3 s dans la mission) n’est pas distinct de celui de compilation. `command_timeout` couvre les deux.
 
 ## 6. Vérifications restant à faire sur Google Cloud
 

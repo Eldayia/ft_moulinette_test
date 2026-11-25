@@ -38,6 +38,10 @@ sh -n install.sh package.sh
 
 Always run tests via `discover -s tests` from `cli/`: test modules import `references` from `tests/`, and `ft_moulinette` must be importable from the cwd. There is no linter configured. `cli/` scripts resolve paths relative to themselves, and `package.sh`'s archive has the contents of `cli/` at its root, so `cli/README.md` must work both in the repo and in an extracted archive.
 
+### Runners (run from `runners/`)
+
+`python3 -m unittest discover -s tests -v` — 65 tests, stdlib only (google-auth is mocked). `ft_moulinette_runners` holds the `ExecutionBackend` contract, protocol v1, archive validation and the Local/Mock/CloudRun backends; see `runners/README.md`. Invariants: never fall back from cloudrun to local; production accepts only isolated backends; reports are untrusted (validated, outcome recomputed by `protocol.classify`); never retry a request whose state is unknown; never log ID tokens.
+
 ### CLI architecture in one pass
 
 - `__main__.main()` → `engine.run()` → `engine.detect_project()` picks Printf (via `ft_printf.h` / `libftprintf.a` markers) or defaults to Libft; Printf is delegated to `printf.run_printf()`.
